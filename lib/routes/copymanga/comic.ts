@@ -14,7 +14,7 @@ import asyncPool from 'tiny-async-pool';
 export const route: Route = {
     path: '/comic/:id/:chapterCnt?',
     categories: ['anime'],
-    example: '/copymanga/comic/dianjuren/5?domain=copymanga.site',
+    example: '/copymanga/comic/dianjuren/5?domain=example.com',
     parameters: { id: '漫画ID', chapterCnt: '返回章节的数量，默认为 `10`', domain: '自定义域名' },
     features: {
         requireConfig: false,
@@ -31,18 +31,14 @@ export const route: Route = {
 
 async function handler(ctx) {
     const id = ctx.req.param('id');
-    // 用于控制返回的章节数量
     const chapterCnt = Number(ctx.req.param('chapterCnt') || 10);
-    // 获取域名参数，默认值为 'copymanga.site'
-    const domain = ctx.req.param('domain') || 'copymanga.site';
+    const domain = ctx.req.param('domain') || 'copymanga.com';  // 默认域名
 
-    // 构建基础URL
     const baseUrl = `https://${domain}`;
     const apiBaseUrl = `https://api.${domain}`;
     const strBaseUrl = `${apiBaseUrl}/api/v3/comic/${id}/group/default/chapters`;
     const iReqLimit = 500;
 
-    // 获取漫画列表
     const chapterArray = await cache.tryGet(
         strBaseUrl,
         async () => {
@@ -92,7 +88,6 @@ async function handler(ctx) {
         false
     );
 
-    // 获取漫画标题、介绍
     const { bookTitle, bookIntro } = await cache.tryGet(`${baseUrl}/comic/${id}`, async () => {
         const { data } = await got(`${baseUrl}/comic/${id}`);
         const $ = load(data);
