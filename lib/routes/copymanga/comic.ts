@@ -14,8 +14,8 @@ import asyncPool from 'tiny-async-pool';
 export const route: Route = {
     path: '/comic/:id/:chapterCnt?',
     categories: ['anime'],
-    example: '/copymanga/comic/dianjuren/5?domain=example.com',
-    parameters: { id: '漫画ID', chapterCnt: '返回章节的数量，默认为 `10`', domain: '自定义域名' },
+    example: '/copymanga/comic/dianjuren/5',
+    parameters: { id: '漫画ID', chapterCnt: '返回章节的数量，默认为 `10`' },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -31,14 +31,15 @@ export const route: Route = {
 
 async function handler(ctx) {
     const id = ctx.req.param('id');
+    // 用于控制返回的章节数量
     const chapterCnt = Number(ctx.req.param('chapterCnt') || 10);
-    const domain = ctx.req.param('domain') || 'copymanga.com';  // 默认域名
-
-    const baseUrl = `https://${domain}`;
-    const apiBaseUrl = `https://api.${domain}`;
+    // 直接调用拷贝漫画的接口
+    const host = 'mangacopy.com';
+    const baseUrl = `https://${host}`;
+    const apiBaseUrl = `https://api.${host}`;
     const strBaseUrl = `${apiBaseUrl}/api/v3/comic/${id}/group/default/chapters`;
     const iReqLimit = 500;
-
+    // 获取漫画列表
     const chapterArray = await cache.tryGet(
         strBaseUrl,
         async () => {
@@ -48,6 +49,7 @@ async function handler(ctx) {
 
             do {
                 bHasNextPage = false;
+                // eslint-disable-next-line no-await-in-loop
                 const { data } = await got(strBaseUrl, {
                     headers: {
                         platform: 1,
@@ -72,13 +74,14 @@ async function handler(ctx) {
             } while (bHasNextPage);
 
             chapters = chapters
-                .map(({ comic_path_word, uuid, name, size, datetime_created, ordered }) => ({
+                .map(({ comic_path_word, uuid, name, size, datetime_created, ordered /* , index*/ }) => ({
                     link: `${baseUrl}/comic/${comic_path_word}/chapter/${uuid}`,
                     uuid,
                     title: name,
                     size,
                     pubDate: parseDate(datetime_created, 'YYYY-MM-DD'),
                     ordered,
+                    // index,
                 }))
                 .sort((a, b) => b.ordered - a.ordered);
 
@@ -88,6 +91,7 @@ async function handler(ctx) {
         false
     );
 
+    // 获取漫画标题、介绍
     const { bookTitle, bookIntro } = await cache.tryGet(`${baseUrl}/comic/${id}`, async () => {
         const { data } = await got(`${baseUrl}/comic/${id}`);
         const $ = load(data);
@@ -108,7 +112,7 @@ async function handler(ctx) {
 
         const contents =
             code === 210
-                ? []
+                ? [] // Request was throttled. Expected available in x seconds.
                 : results.chapter.contents.map((content) => ({ url: content.url.replace('.c800x.', '.c1500x.') }));
 
         return {
