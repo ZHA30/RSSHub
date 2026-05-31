@@ -113,6 +113,21 @@ jobs:
                     return updated;
                   });
 
+                  rewrite('.vitepress/theme/composables/useLocale.ts', (content) => {
+                    let updated = content;
+                    if (!updated.includes("import { useData, withBase } from 'vitepress';")) {
+                      updated = updated.replace(
+                        "import { useData } from 'vitepress';",
+                        "import { useData, withBase } from 'vitepress';"
+                      );
+                    }
+                    updated = updated.replace(
+                      "const localePath = computed(() => (lang.value === 'en' ? '' : '/zh'));",
+                      "const localePath = computed(() => withBase(lang.value === 'en' ? '/' : '/zh/').replace(/\\/$/, ''));"
+                    );
+                    return updated;
+                  });
+
                   const patchComponent = (relativePath, needsWithBaseImport) => {
                     rewrite(relativePath, (content) => {
                       let updated = content;
@@ -136,6 +151,34 @@ jobs:
 
                   patchComponent('.vitepress/theme/components/NamespaceList.vue', true);
                   patchComponent('.vitepress/theme/components/NamespaceDetail.vue', false);
+
+                  rewrite('.vitepress/theme/components/NamespaceDetail.vue', (content) => {
+                    let updated = content;
+                    if (!updated.includes('const rewriteMarkdownAssetUrls = (html: string) =>')) {
+                      updated = updated.replace(
+                        "function handleImageError(e: Event) {\n  const img = e.target as HTMLImageElement;\n  img.src = withBase('/logo.png');\n}\n\nfunction renderMarkdown(content: string) {\n  return md.render(content);\n}\n",
+                        "function handleImageError(e: Event) {\n  const img = e.target as HTMLImageElement;\n  img.src = withBase('/logo.png');\n}\n\nconst rewriteMarkdownAssetUrls = (html: string) =>\n  html\n    .replace(/(href|src)=\"\\/(?!\\/)/g, (_, attr) => `${attr}=\"${withBase('/')}`)\n    .replace(/(href|src)='\\/(?!\\/)/g, (_, attr) => `${attr}='${withBase('/')}`);\n\nfunction renderMarkdown(content: string) {\n  return rewriteMarkdownAssetUrls(md.render(content));\n}\n"
+                      );
+                    }
+                    return updated;
+                  });
+
+                  rewrite('.vitepress/theme/components/Route.vue', (content) => {
+                    let updated = content;
+                    if (!updated.includes("import { withBase } from 'vitepress';")) {
+                      updated = updated.replace(
+                        "import MarkdownIt from 'markdown-it';\n",
+                        "import MarkdownIt from 'markdown-it';\nimport { withBase } from 'vitepress';\n"
+                      );
+                    }
+                    if (!updated.includes('const rewriteMarkdownAssetUrls = (html: string) =>')) {
+                      updated = updated.replace(
+                        "const renderMarkdown = (item, inline = true) => {\n  const md = new MarkdownIt({\n    html: true,\n  });\n  return inline ? md.renderInline(item) : md.render(item);\n};\n",
+                        "const rewriteMarkdownAssetUrls = (html: string) =>\n  html\n    .replace(/(href|src)=\"\\/(?!\\/)/g, (_, attr) => `${attr}=\"${withBase('/')}`)\n    .replace(/(href|src)='\\/(?!\\/)/g, (_, attr) => `${attr}='${withBase('/')}`);\n\nconst renderMarkdown = (item, inline = true) => {\n  const md = new MarkdownIt({\n    html: true,\n  });\n  const rendered = inline ? md.renderInline(item) : md.render(item);\n  return rewriteMarkdownAssetUrls(rendered);\n};\n"
+                      );
+                    }
+                    return updated;
+                  });
 
                   console.log(`Patched docs site for base ${base}`);
                   EOF
