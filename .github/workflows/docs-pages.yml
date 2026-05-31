@@ -1,0 +1,94 @@
+name: Docs Pages
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - master
+        paths:
+            - '.github/workflows/docs-pages.yml'
+            - 'lib/**/*.ts'
+            - 'lib/**/*.tsx'
+            - 'scripts/workflow/build-docs.ts'
+            - 'scripts/workflow/build-routes.ts'
+            - 'scripts/workflow/data.ts'
+            - 'package.json'
+            - 'pnpm-lock.yaml'
+
+permissions:
+    contents: read
+    pages: write
+    id-token: write
+
+concurrency:
+    group: docs-pages
+    cancel-in-progress: true
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        outputs:
+            artifact-name: github-pages
+        steps:
+            - name: Checkout RSSHub
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+
+            - name: Install pnpm
+              uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
+
+            - name: Use Node.js Active LTS
+              uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+              with:
+                  node-version: lts/*
+                  cache: 'pnpm'
+                  cache-dependency-path: |
+                      pnpm-lock.yaml
+                      rsshub-docs/pnpm-lock.yaml
+
+            - name: Install RSSHub dependencies
+              run: pnpm i
+
+            - name: Build docs data
+              run: pnpm build:docs
+
+            - name: Checkout docs site
+              uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+              with:
+                  repository: 'RSSNext/rsshub-docs'
+                  path: rsshub-docs
+
+            - name: Sync generated docs data
+              run: |
+                  cp ./assets/build/docs/routes.json ./rsshub-docs/src/public/routes.json
+                  cp ./assets/build/docs/categories.json ./rsshub-docs/src/public/categories.json
+                  cp ./lib/types.ts ./rsshub-docs/.vitepress/theme/types.ts
+                  cp ./scripts/workflow/data.ts ./rsshub-docs/.vitepress/config/data.ts
+
+            - name: Install docs dependencies
+              run: pnpm i
+              working-directory: ./rsshub-docs
+
+            - name: Build docs site
+              run: pnpm docs:build
+              working-directory: ./rsshub-docs
+
+            - name: Setup Pages
+              uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
+            - name: Upload Pages artifact
+              uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+              with:
+                  path: ./rsshub-docs/.vitepress/dist
+
+    deploy:
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        needs: build
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        steps:
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@5fd133a1e1ab9075e503f3088417d39d27f40d44 # v4.0.5
