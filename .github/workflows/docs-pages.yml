@@ -68,11 +68,11 @@ jobs:
             - name: Patch docs site for project pages base path
               run: |
                   perl -0pi -e "s/export const shared = defineConfig\\(\\{/export const shared = defineConfig({\\n  base: '\\/RSSHub\\/',/" ./rsshub-docs/.vitepress/config/shared.ts
-                  perl -0pi -e "s/fetch\\('\\/routes\\.json'\\), fetch\\('\\/categories\\.json'\\)/fetch('\\.\\/routes.json'), fetch('.\\/categories.json')/g" ./rsshub-docs/.vitepress/theme/components/NamespaceList.vue ./rsshub-docs/.vitepress/theme/components/NamespaceDetail.vue
-                  perl -0pi -e "s/img\\.src = '\\/logo\\.png'/img.src = '.\\/logo.png'/g" ./rsshub-docs/.vitepress/theme/components/NamespaceList.vue ./rsshub-docs/.vitepress/theme/components/NamespaceDetail.vue
-                  perl -0pi -e "s/href: '\\/favicon\\.ico'/href: '.\\/favicon.ico'/g" ./rsshub-docs/.vitepress/config/shared.ts
-                  perl -0pi -e "s/logo: '\\/logo\\.png'/logo: '.\\/logo.png'/g" ./rsshub-docs/.vitepress/config/shared.ts
-                  perl -0pi -e "s/src: \\/logo\\.png/src: .\\/logo.png/g" ./rsshub-docs/src/index.md ./rsshub-docs/src/zh/index.md
+                  perl -0pi -e "s/fetch\\('\\/routes\\.json'\\), fetch\\('\\/categories\\.json'\\)/fetch('\\/RSSHub\\/routes.json'), fetch('\\/RSSHub\\/categories.json')/g" ./rsshub-docs/.vitepress/theme/components/NamespaceList.vue ./rsshub-docs/.vitepress/theme/components/NamespaceDetail.vue
+                  perl -0pi -e "s/img\\.src = '\\/logo\\.png'/img.src = '\\/RSSHub\\/logo.png'/g" ./rsshub-docs/.vitepress/theme/components/NamespaceList.vue ./rsshub-docs/.vitepress/theme/components/NamespaceDetail.vue
+                  perl -0pi -e "s/href: '\\/favicon\\.ico'/href: '\\/RSSHub\\/favicon.ico'/g" ./rsshub-docs/.vitepress/config/shared.ts
+                  perl -0pi -e "s/logo: '\\/logo\\.png'/logo: '\\/RSSHub\\/logo.png'/g" ./rsshub-docs/.vitepress/config/shared.ts
+                  perl -0pi -e "s/src: \\/logo\\.png/src: \\/RSSHub\\/logo.png/g" ./rsshub-docs/src/index.md ./rsshub-docs/src/zh/index.md
 
             - name: Install docs dependencies
               run: pnpm i
