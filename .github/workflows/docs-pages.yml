@@ -34,6 +34,18 @@ jobs:
             - name: Checkout RSSHub
               uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
+            - name: Setup Pages
+              id: pages
+              uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
+            - name: Resolve Pages base
+              run: |
+                  if [ -n "${{ steps.pages.outputs.base_path }}" ]; then
+                    echo "PAGES_BASE=${{ steps.pages.outputs.base_path }}/" >> "$GITHUB_ENV"
+                  else
+                    echo "PAGES_BASE=/" >> "$GITHUB_ENV"
+                  fi
+
             - name: Install pnpm
               uses: pnpm/action-setup@0e279bb959325dab635dd2c09392533439d90093 # v6.0.8
 
@@ -65,14 +77,70 @@ jobs:
                   cp ./lib/types.ts ./rsshub-docs/.vitepress/theme/types.ts
                   cp ./scripts/workflow/data.ts ./rsshub-docs/.vitepress/config/data.ts
 
-            - name: Patch docs site for project pages base path
+            - name: Patch docs site for dynamic pages base
               run: |
-                  perl -0pi -e "s/export const shared = defineConfig\\(\\{/export const shared = defineConfig({\\n  base: '\\/RSSHub\\/',/" ./rsshub-docs/.vitepress/config/shared.ts
-                  perl -0pi -e "s/fetch\\('\\/routes\\.json'\\), fetch\\('\\/categories\\.json'\\)/fetch('\\/RSSHub\\/routes.json'), fetch('\\/RSSHub\\/categories.json')/g" ./rsshub-docs/.vitepress/theme/components/NamespaceList.vue ./rsshub-docs/.vitepress/theme/components/NamespaceDetail.vue
-                  perl -0pi -e "s/img\\.src = '\\/logo\\.png'/img.src = '\\/RSSHub\\/logo.png'/g" ./rsshub-docs/.vitepress/theme/components/NamespaceList.vue ./rsshub-docs/.vitepress/theme/components/NamespaceDetail.vue
-                  perl -0pi -e "s/href: '\\/favicon\\.ico'/href: '\\/RSSHub\\/favicon.ico'/g" ./rsshub-docs/.vitepress/config/shared.ts
-                  perl -0pi -e "s/logo: '\\/logo\\.png'/logo: '\\/RSSHub\\/logo.png'/g" ./rsshub-docs/.vitepress/config/shared.ts
-                  perl -0pi -e "s/src: \\/logo\\.png/src: \\/RSSHub\\/logo.png/g" ./rsshub-docs/src/index.md ./rsshub-docs/src/zh/index.md
+                  node <<'EOF'
+                  const fs = require('node:fs');
+                  const path = require('node:path');
+
+                  const base = process.env.PAGES_BASE || '/';
+                  const docsRoot = path.join(process.cwd(), 'rsshub-docs');
+
+                  const rewrite = (relativePath, transform) => {
+                    const filePath = path.join(docsRoot, relativePath);
+                    const original = fs.readFileSync(filePath, 'utf8');
+                    const updated = transform(original);
+                    if (updated !== original) {
+                      fs.writeFileSync(filePath, updated);
+                    }
+                  };
+
+                  rewrite('.vitepress/config/shared.ts', (content) => {
+                    let updated = content;
+                    if (!updated.includes("const docsBase = process.env.DOCS_BASE || '/'")) {
+                      updated = updated.replace(
+                        "const telegramLogo = `",
+                        "const docsBase = process.env.DOCS_BASE || '/';\n\nconst telegramLogo = `"
+                      );
+                    }
+                    if (!updated.includes('base: docsBase,')) {
+                      updated = updated.replace(
+                        "export const shared = defineConfig({",
+                        "export const shared = defineConfig({\n  base: docsBase,"
+                      );
+                    }
+                    updated = updated.replace("href: '/favicon.ico'", "href: `${docsBase}favicon.ico`");
+                    return updated;
+                  });
+
+                  const patchComponent = (relativePath, needsWithBaseImport) => {
+                    rewrite(relativePath, (content) => {
+                      let updated = content;
+                      if (needsWithBaseImport) {
+                        updated = updated.replace(
+                          "import { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';",
+                          "import { withBase } from 'vitepress';\nimport { ref, computed, onMounted, onBeforeUnmount, watch } from 'vue';"
+                        );
+                      } else {
+                        updated = updated.replace(
+                          "import { useRoute } from 'vitepress';",
+                          "import { useRoute, withBase } from 'vitepress';"
+                        );
+                      }
+                      updated = updated.replaceAll("fetch('/routes.json')", "fetch(withBase('/routes.json'))");
+                      updated = updated.replaceAll("fetch('/categories.json')", "fetch(withBase('/categories.json'))");
+                      updated = updated.replaceAll("img.src = '/logo.png';", "img.src = withBase('/logo.png');");
+                      return updated;
+                    });
+                  };
+
+                  patchComponent('.vitepress/theme/components/NamespaceList.vue', true);
+                  patchComponent('.vitepress/theme/components/NamespaceDetail.vue', false);
+
+                  console.log(`Patched docs site for base ${base}`);
+                  EOF
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
 
             - name: Install docs dependencies
               run: pnpm i
@@ -81,9 +149,6 @@ jobs:
             - name: Build docs site
               run: pnpm docs:build
               working-directory: ./rsshub-docs
-
-            - name: Setup Pages
-              uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
 
             - name: Upload Pages artifact
               uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
