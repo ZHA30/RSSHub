@@ -1,6 +1,6 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
@@ -8,7 +8,7 @@ import { parseDate } from '@/utils/parse-date';
 const baseUrl = 'https://bgm.tv';
 
 export const route: Route = {
-    path: '/group/:id',
+    path: '/group/:id{(?!discover$)[^/]+}',
     categories: ['anime'],
     example: '/bangumi.tv/group/boring',
     parameters: { id: '小组 id, 在小组页面地址栏查看' },
@@ -30,7 +30,7 @@ export const route: Route = {
     handler,
 };
 
-async function handler(ctx) {
+async function handler(ctx): Promise<Data> {
     const groupID = ctx.req.param('id');
     const link = `${baseUrl}/group/${groupID}/forum`;
     const html = await ofetch(link);
@@ -41,7 +41,8 @@ async function handler(ctx) {
         $('.topic_list .topic')
             .toArray()
             .map((elem) => {
-                const link = new URL($('.subject a', elem).attr('href'), baseUrl).href;
+                const subject = $('.subject a', elem).first();
+                const link = new URL(subject.attr('href') ?? '', baseUrl).href;
                 return cache.tryGet(link, async () => {
                     const html = await ofetch(link);
                     const $ = load(html);
@@ -49,7 +50,7 @@ async function handler(ctx) {
                     const summary = 'Reply: ' + $('.posts', elem).text();
                     return {
                         link,
-                        title: $('.subject a', elem).attr('title'),
+                        title: subject.attr('title') ?? subject.text().trim(),
                         pubDate: parseDate($('.lastpost .time', elem).text()),
                         description: fullText ? summary + '<br><br>' + fullText : summary,
                         author: $('.author a', elem).text(),
