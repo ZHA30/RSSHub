@@ -146,9 +146,17 @@ jobs:
               run: pnpm i
               working-directory: ./rsshub-docs
 
+            - name: Show resolved docs base
+              run: echo "DOCS_BASE=${DOCS_BASE}"
+              working-directory: ./rsshub-docs
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
+
             - name: Build docs site
               run: pnpm docs:build
               working-directory: ./rsshub-docs
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
 
             - name: Upload Pages artifact
               uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
