@@ -62,6 +62,8 @@ jobs:
               run: pnpm rb
             - name: Install bundled Chromium
               run: pnpm exec playwright install chromium
+            - name: Build route metadata
+              run: pnpm build:routes
             - name: Test all and generate coverage
               run: pnpm run vitest:coverage --reporter=github-actions
               env:
