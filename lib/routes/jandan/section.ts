@@ -1,15 +1,15 @@
 import type { DataItem, Route } from '@/types';
 
-import { handleCommentSection, handleForumSection, handleTopSection } from './utils';
+import { handleCommentSection, handleForum, handleTopSection, isCommentSection } from './utils';
 
 export const route: Route = {
     path: '/:category/:type?',
     example: '/jandan/top',
-    name: 'Section',
-    maintainers: ['nczitzk', 'pseudoyu'],
+    name: '栏目',
+    maintainers: ['nczitzk', 'pseudoyu', 'ZHA30'],
     parameters: {
         category: {
-            description: '板块',
+            description: '栏目',
             options: [
                 {
                     label: '热榜',
@@ -24,6 +24,10 @@ export const route: Route = {
                     value: 'treehole',
                 },
                 {
+                    label: '女装',
+                    value: 'beauty',
+                },
+                {
                     label: '随手拍',
                     value: 'ooxx',
                 },
@@ -33,7 +37,11 @@ export const route: Route = {
                 },
                 {
                     label: '鱼塘',
-                    value: 'bbs',
+                    value: 'forum',
+                },
+                {
+                    label: '大吐槽',
+                    value: 'tucao',
                 },
             ],
         },
@@ -66,8 +74,12 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['i.jandan.net/:category'],
-            target: '/jandan/:category?',
+            source: ['jandan.net/:category'],
+            target: '/jandan/:category',
+        },
+        {
+            source: ['jandan.net/new/forum'],
+            target: '/jandan/forum',
         },
     ],
     handler,
@@ -78,41 +90,24 @@ async function handler(ctx): Promise<{
     link: string;
     item: DataItem[];
 }> {
-    let category = ctx.req.param('category') ?? 'top';
-    category = category.replace(/#.*$/, '');
+    const category = (ctx.req.param('category') ?? 'top').replace(/#.*$/, '');
+    const type = ctx.req.param('type');
 
-    const type = ctx.req.param('type') ?? '4hr';
-    const rootUrl = 'http://i.jandan.net';
-    const currentUrl = `${rootUrl}/${category}`;
+    let result: { title: string; link: string; items: DataItem[] };
 
-    let result: { title: string; items: DataItem[] };
-
-    try {
-        if (category === 'top') {
-            result = await handleTopSection(rootUrl, type);
-        } else if (category === 'bbs') {
-            result = await handleForumSection(rootUrl);
-        } else {
-            result = await handleCommentSection(rootUrl, category);
-        }
-    } catch (error: unknown) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        result = {
-            title: `煎蛋 - ${category}`,
-            items: [
-                {
-                    title: `抓取出错: ${category}`,
-                    description: `抓取 ${category} 分区时出现错误: ${errorMessage}`,
-                    link: currentUrl,
-                    pubDate: new Date(),
-                },
-            ],
-        };
+    if (category === 'top') {
+        result = await handleTopSection(type);
+    } else if (category === 'forum' || category === 'bbs') {
+        result = await handleForum();
+    } else if (isCommentSection(category)) {
+        result = await handleCommentSection(category);
+    } else {
+        throw new Error(`Unsupported jandan category: ${category}`);
     }
 
     return {
         title: result.title,
-        link: currentUrl,
+        link: result.link,
         item: result.items,
     };
 }

@@ -1,13 +1,17 @@
 import type { DataItem, Route } from '@/types';
 
-import { handleArticleList } from './utils';
+import { handleTag } from './utils';
 
 export const route: Route = {
-    path: '/',
-    example: '/jandan',
-    name: '新鲜事',
-    maintainers: ['nczitzk', 'bigfei', 'pseudoyu', 'ZHA30'],
-    parameters: {},
+    path: '/tag/:tag',
+    example: '/jandan/tag/tech',
+    name: '标签',
+    maintainers: ['ZHA30'],
+    parameters: {
+        tag: {
+            description: '标签名',
+        },
+    },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -18,19 +22,19 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['jandan.net'],
-            target: '/jandan',
+            source: ['jandan.net/p/tag/:tag'],
+            target: '/jandan/tag/:tag',
         },
     ],
     handler,
 };
 
-async function handler(): Promise<{
+async function handler(ctx): Promise<{
     title: string;
     link: string;
     item: DataItem[];
 }> {
-    const result = await handleArticleList();
+    const result = await handleTag(ctx.req.param('tag'));
 
     return {
         title: result.title,

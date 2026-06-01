@@ -1,242 +1,339 @@
 import { load } from 'cheerio';
 
 import type { DataItem } from '@/types';
+import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
-/**
- * Extract page ID from script tags in HTML
- */
-export const extractPageId = async (url: string, referer: string): Promise<string> => {
-    const response = await ofetch(url, {
-        headers: {
-            Referer: referer,
-            Accept: 'application/json, text/plain, */*',
-        },
-    });
+export const rootUrl = 'https://jandan.net';
 
-    const $ = load(response);
-    let pageId = '';
-
-    $('script').each((_, script) => {
-        const content = $(script).html() || '';
-        const match = content.match(/PAGE\s*=\s*{\s*id\s*:\s*(\d+)\s*}/);
-        if (match) {
-            pageId = match[1];
-        }
-    });
-
-    return pageId;
+const requestHeaders = {
+    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36',
+    Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,application/json;q=0.8,*/*;q=0.7',
 };
 
-/**
- * Handle the top section (热榜)
- */
-export const handleTopSection = async (rootUrl: string, type: string): Promise<{ title: string; items: DataItem[] }> => {
-    const apiUrl = `${rootUrl}/api/top/${type}`;
-    const response = await ofetch(apiUrl, {
+const apiHeaders = {
+    ...requestHeaders,
+    Accept: 'application/json, text/plain, */*',
+};
+
+const commentSections = {
+    qa: {
+        title: '问答',
+        id: '88399',
+        path: '/qa',
+        source: 'comment',
+    },
+    treehole: {
+        title: '树洞',
+        id: '102312',
+        path: '/treehole',
+        source: 'top-post',
+    },
+    beauty: {
+        title: '女装',
+        id: '108629',
+        path: '/beauty',
+        source: 'top-post',
+    },
+    ooxx: {
+        title: '随手拍',
+        id: '21183',
+        path: '/ooxx',
+        source: 'top-post',
+    },
+    pic: {
+        title: '无聊图',
+        id: '26402',
+        path: '/pic',
+        source: 'top-post',
+    },
+    tucao: {
+        title: '大吐槽',
+        id: '21221',
+        path: '/tucao',
+        source: 'tucao',
+    },
+} as const;
+
+const topTypes = {
+    '4hr': '4小时热门',
+    pic3days: '3天内无聊图',
+    pic7days: '7天内无聊图',
+} as const;
+
+type CommentSection = keyof typeof commentSections;
+type TopType = keyof typeof topTypes;
+
+const normalizeImageUrl = (url?: string) => {
+    if (!url) {
+        return '';
+    }
+
+    const normalized = url.startsWith('//') ? `https:${url}` : url;
+    return normalized.replace(/^https?:\/\/(\w+)\.moyu\.im/, 'https://$1.sinaimg.cn');
+};
+
+const normalizeHtml = (html = '') => html.replaceAll(/(<img\b[^>]*?\bsrc=["'])([^"']+)(["'][^>]*>)/g, (_, prefix, src, suffix) => `${prefix}${normalizeImageUrl(src)}${suffix}`);
+
+const textFromHtml = (html = '') => load(html).text().trim().replaceAll(/\s+/g, ' ');
+
+const get = <T>(url: string, referer = rootUrl) =>
+    ofetch<T>(url, {
         headers: {
-            Referer: rootUrl,
-            Accept: 'application/json, text/plain, */*',
+            ...requestHeaders,
+            Referer: referer,
         },
     });
 
-    let title = '热榜';
-    switch (type) {
-        case 'pic3days':
-            title += ' - 3天内无聊图';
-            break;
-        case 'pic7days':
-            title += ' - 7天内无聊图';
-            break;
-        default:
-            title += ' - 4小时热门';
-            break;
-    }
+const getApi = <T>(url: string, referer = rootUrl) =>
+    ofetch<T>(url, {
+        headers: {
+            ...apiHeaders,
+            Referer: referer,
+        },
+    });
 
-    if (response.code === 0 && response.data && Array.isArray(response.data)) {
-        const items = response.data.map((item) => {
-            const content = item.content.replaceAll(/img src="(.*?)"/g, (match, src) => match.replace(src, src.replace(/^https?:\/\/(\w+)\.moyu\.im/, 'https://$1.sinaimg.cn')));
+interface CommentApiResponse {
+    code: number;
+    msg: string;
+    data?: {
+        list?: Array<{
+            id: number;
+            author?: string;
+            content?: string;
+            date_gmt?: string;
+            date?: string;
+            post_title?: string;
+        }>;
+    };
+}
+
+interface TopApiResponse {
+    code: number;
+    msg: string;
+    data?: Array<{
+        id: number;
+        author?: string;
+        content?: string;
+        date_gmt?: string;
+        date?: string;
+        post_title?: string;
+        hot_comments?: Array<{
+            comment_author?: string;
+            comment_content?: string;
+            comment_date?: string;
+            vote_positive?: number;
+            vote_negative?: number;
+            post_title?: string;
+        }>;
+    }>;
+}
+
+interface ForumApiResponse {
+    code: number;
+    msg: string;
+    data?: {
+        list?: Array<{
+            post_id: number;
+            title?: string;
+            author_name?: string;
+            create_time?: string;
+            update_time?: string;
+            reply_count?: number;
+        }>;
+    };
+}
+
+const parseArticleList = (html: string) => {
+    const $ = load(html);
+    const items = $('.post-list .post-item')
+        .toArray()
+        .map((item) => {
+            const element = $(item);
+            const titleElement = element.find('.post-title a').first();
+            const link = titleElement.attr('href');
+            const title = titleElement.text().trim();
+
+            if (!title || !link) {
+                return;
+            }
+
+            const image = normalizeImageUrl(element.find('.thumb img').attr('src'));
+            const summary = element.find('.post-excerpt').text().trim();
+            const category = element
+                .find('.post-tag a')
+                .toArray()
+                .map((tag) => $(tag).text().trim())
+                .filter(Boolean);
 
             return {
-                author: item.author,
-                title: `${item.author}: ${content.replaceAll(/<[^>]+>/g, '')}`,
-                description: content,
-                pubDate: parseDate(item.date),
-                link: `${rootUrl}/t/${item.id}`,
-            } as DataItem;
-        });
+                title,
+                link,
+                description: [image ? `<img src="${image}">` : '', summary].filter(Boolean).join('<br>'),
+                category,
+            } satisfies DataItem;
+        })
+        .filter(Boolean);
 
-        return { title, items };
-    }
+    const title = $('h1.header-h1').first().text().trim() || $('title').text().trim() || '煎蛋';
 
     return {
         title,
-        items: [
-            {
-                title: `获取失败: ${title}`,
-                description: '未能获取热榜数据',
-                link: `${rootUrl}/top`,
-                pubDate: new Date(),
-            },
-        ],
+        items,
     };
 };
 
-/**
- * Handle the forum/bbs section (鱼塘)
- */
-export const handleForumSection = async (rootUrl: string): Promise<{ title: string; items: DataItem[] }> => {
-    const title = '煎蛋 - 鱼塘';
-    const currentUrl = `${rootUrl}/bbs`;
+const enrichArticle = (item: DataItem) =>
+    cache.tryGet(`jandan:article:${item.link}`, async () => {
+        const html = await get<string>(item.link || rootUrl);
+        const $ = load(html);
+        $('.post-content script, .post-content style').remove();
 
-    try {
-        const forumId = await extractPageId(currentUrl, rootUrl);
-
-        if (!forumId) {
-            return {
-                title,
-                items: [
-                    {
-                        title: `获取失败: ${title}`,
-                        description: '无法获取论坛ID',
-                        link: currentUrl,
-                        pubDate: new Date(),
-                    },
-                ],
-            };
-        }
-
-        const apiUrl = `${rootUrl}/api/forum/posts/${forumId}?page=1`;
-        const forumData = await ofetch(apiUrl, {
-            headers: {
-                Referer: currentUrl,
-                Accept: 'application/json, text/plain, */*',
-            },
-        });
-
-        if (forumData.code === 0 && forumData.data && forumData.data.list && Array.isArray(forumData.data.list)) {
-            const items = forumData.data.list.map((post) => {
-                const content = post.content.replaceAll(/img src="(.*?)"/g, (match, src) => match.replace(src, src.replace(/^https?:\/\/(\w+)\.moyu\.im/, 'https://$1.sinaimg.cn')));
-
-                return {
-                    author: post.author_name,
-                    title: post.title || `${post.author_name}发表了新主题`,
-                    description: content,
-                    pubDate: parseDate(post.update_time || post.create_time),
-                    link: `${rootUrl}/bbs#/topic/${post.post_id}`,
-                    category: post.reply_count > 0 ? [`${post.reply_count}条回复`] : undefined,
-                } as DataItem;
-            });
-
-            return { title, items };
-        }
+        const pubDateText = $('.post-meta')
+            .first()
+            .text()
+            .match(/发布于\s*([\d.]+\s*,\s*[\d:]+)/)?.[1];
+        const author = $('.post-author').first().text().trim();
+        const content = normalizeHtml($('.post-content').html() || item.description || '');
 
         return {
-            title,
-            items: [
-                {
-                    title: `获取失败: ${title}`,
-                    description: '未能获取鱼塘数据',
-                    link: currentUrl,
-                    pubDate: new Date(),
-                },
-            ],
-        };
-    } catch (error) {
-        return {
-            title,
-            items: [
-                {
-                    title: '解析错误: 鱼塘',
-                    description: `解析鱼塘页面时出错: ${error instanceof Error ? error.message : String(error)}`,
-                    link: currentUrl,
-                    pubDate: new Date(),
-                },
-            ],
-        };
-    }
+            ...item,
+            description: content,
+            author,
+            pubDate: pubDateText ? parseDate(pubDateText.replaceAll('.', '-').replaceAll(',', '')) : undefined,
+        } satisfies DataItem;
+    });
+
+export const handleArticleList = async (path = '/') => {
+    const currentUrl = `${rootUrl}${path}`;
+    const html = await get<string>(currentUrl);
+    const { title, items } = parseArticleList(html);
+    const enrichedItems = await Promise.all(items.map((item) => enrichArticle(item)));
+
+    return {
+        title: title === '新鲜事' ? '煎蛋 - 新鲜事' : `煎蛋 - ${title}`,
+        link: currentUrl,
+        items: enrichedItems,
+    };
 };
 
-/**
- * Handle other sections (问答, 树洞, 随手拍, 无聊图)
- */
-export const handleCommentSection = async (rootUrl: string, category: string): Promise<{ title: string; items: DataItem[] }> => {
-    const currentUrl = `${rootUrl}/${category}`;
+export const handleTag = (tag: string) => handleArticleList(`/p/tag/${encodeURIComponent(tag)}`);
 
-    try {
-        const pageId = await extractPageId(currentUrl, rootUrl);
+export const isCommentSection = (category: string): category is CommentSection => category in commentSections;
 
-        const response = await ofetch(currentUrl, {
-            headers: {
-                Referer: rootUrl,
-                Accept: 'application/json, text/plain, */*',
+export const handleCommentSection = async (category: CommentSection) => {
+    const section = commentSections[category];
+    const currentUrl = `${rootUrl}${section.path}`;
+    let response: CommentApiResponse;
+
+    if (section.source === 'comment') {
+        response = await getApi<CommentApiResponse>(`${rootUrl}/api/comment/post/${section.id}?order=desc&page=1`, currentUrl);
+    } else if (section.source === 'tucao') {
+        const data = await getApi<TopApiResponse>(`${rootUrl}/api/top/tucao`, currentUrl);
+        response = {
+            code: data.code,
+            msg: data.msg,
+            data: {
+                list: data.data,
             },
-        });
-
-        const $ = load(response);
-        const title = String($('title').text().trim()) || `煎蛋 - ${category}`;
-
-        if (!pageId) {
-            return {
-                title,
-                items: [
-                    {
-                        title: `无法解析: ${title}`,
-                        description: '无法从页面中获取到帖子ID，可能网站结构已变更',
-                        link: currentUrl,
-                        pubDate: new Date(),
-                    },
-                ],
-            };
-        }
-
-        const apiUrl = `${rootUrl}/api/comment/post/${pageId}?order=desc&page=1`;
-        const commentsData = await ofetch(apiUrl, {
-            headers: {
-                Referer: currentUrl,
-                Accept: 'application/json, text/plain, */*',
-            },
-        });
-
-        if (commentsData.code === 0 && commentsData.data && commentsData.data.list && Array.isArray(commentsData.data.list)) {
-            const items = commentsData.data.list.map((comment) => {
-                const content = comment.content.replaceAll(/img src="(.*?)"/g, (match, src) => match.replace(src, src.replace(/^https?:\/\/(\w+)\.moyu\.im/, 'https://$1.sinaimg.cn')));
-
-                return {
-                    author: comment.author,
-                    title: `${comment.author}: ${content.replaceAll(/<[^>]+>/g, '')}`,
-                    description: content,
-                    pubDate: parseDate(comment.date_gmt || comment.date),
-                    link: `${rootUrl}/t/${comment.id}`,
-                } as DataItem;
-            });
-
-            return { title, items };
-        }
-
-        return {
-            title,
-            items: [
-                {
-                    title: `暂无内容: ${title || category}`,
-                    description: '没有获取到内容，可能需要更新解析规则',
-                    link: currentUrl,
-                    pubDate: new Date(),
-                },
-            ],
         };
-    } catch {
-        return {
-            title: `煎蛋 - ${category}`,
-            items: [
-                {
-                    title: `解析错误: ${category}`,
-                    description: '解析页面时出错',
-                    link: currentUrl,
-                    pubDate: new Date(),
-                },
-            ],
+    } else {
+        const data = await getApi<TopApiResponse>(`${rootUrl}/api/top/post/${section.id}`, currentUrl);
+        response = {
+            code: data.code,
+            msg: data.msg,
+            data: {
+                list: data.data,
+            },
         };
     }
+
+    if (response.code !== 0 || !Array.isArray(response.data?.list)) {
+        throw new Error(`Failed to fetch ${section.title}: ${response.msg}`);
+    }
+
+    const items = response.data.list.map((comment) => {
+        const content = normalizeHtml(comment.content || '');
+        const hotComments = 'hot_comments' in comment && Array.isArray(comment.hot_comments) ? comment.hot_comments : [];
+        const hotCommentsHtml = hotComments
+            .map((hotComment) => {
+                const vote = typeof hotComment.vote_positive === 'number' ? ` (${hotComment.vote_positive} OO${hotComment.vote_negative ? ` / ${hotComment.vote_negative} XX` : ''})` : '';
+                return `<blockquote>${hotComment.comment_author || '匿名'}${vote}: ${normalizeHtml(hotComment.comment_content || '')}</blockquote>`;
+            })
+            .join('');
+        const titleText = textFromHtml(content);
+
+        return {
+            author: comment.author,
+            title: `${comment.author || '匿名'}${titleText ? `: ${titleText}` : ''}`,
+            description: [content, hotCommentsHtml].filter(Boolean).join('<hr>'),
+            pubDate: parseDate(comment.date_gmt || comment.date),
+            link: `${rootUrl}/t/${comment.id}`,
+            category: comment.post_title ? [comment.post_title] : [section.title],
+        } satisfies DataItem;
+    });
+
+    return {
+        title: `煎蛋 - ${section.title}`,
+        link: currentUrl,
+        items,
+    };
+};
+
+export const normalizeTopType = (type?: string): TopType => (type && type in topTypes ? (type as TopType) : '4hr');
+
+export const handleTopSection = async (type?: string) => {
+    const topType = normalizeTopType(type);
+    const title = `热榜 - ${topTypes[topType]}`;
+    const response = await getApi<TopApiResponse>(`${rootUrl}/api/top/${topType}`, `${rootUrl}/top`);
+
+    if (response.code !== 0 || !Array.isArray(response.data)) {
+        throw new Error(`Failed to fetch ${title}: ${response.msg}`);
+    }
+
+    const items = response.data.map((item) => {
+        const content = normalizeHtml(item.content || '');
+        const titleText = textFromHtml(content);
+
+        return {
+            author: item.author,
+            title: `${item.author || '匿名'}${titleText ? `: ${titleText}` : ''}`,
+            description: content,
+            pubDate: parseDate(item.date_gmt || item.date),
+            link: `${rootUrl}/t/${item.id}`,
+            category: item.post_title ? [item.post_title] : undefined,
+        } satisfies DataItem;
+    });
+
+    return {
+        title,
+        link: `${rootUrl}/top`,
+        items,
+    };
+};
+
+export const handleForum = async () => {
+    const forumId = '112928';
+    const currentUrl = `${rootUrl}/new/forum`;
+    const response = await getApi<ForumApiResponse>(`${rootUrl}/api/forum/posts/${forumId}?page=1`, currentUrl);
+
+    if (response.code !== 0 || !Array.isArray(response.data?.list)) {
+        throw new Error(`Failed to fetch 鱼塘: ${response.msg}`);
+    }
+
+    const items = response.data.list.map((post) => ({
+        author: post.author_name,
+        title: post.title || `${post.author_name || '匿名'}发表了新主题`,
+        description: post.reply_count ? `${post.reply_count} 条回复` : '',
+        pubDate: parseDate(post.update_time || post.create_time),
+        link: `${rootUrl}/new/forum/topic/${post.post_id}`,
+        category: post.reply_count ? [`${post.reply_count} 条回复`] : undefined,
+    })) satisfies DataItem[];
+
+    return {
+        title: '煎蛋 - 鱼塘',
+        link: currentUrl,
+        items,
+    };
 };
