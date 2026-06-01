@@ -68,5 +68,3 @@ jobs:
               run: pnpm run vitest:coverage --reporter=github-actions
               env:
                   REDIS_URL: redis://localhost:${{ job.services.redis.ports['6379'] }}/
-            - name: Test Playwright
-              run: pnpm run vitest playwright
