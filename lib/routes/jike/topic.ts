@@ -6,7 +6,7 @@ import { ViewType } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 
-import { constructTopicEntry, topicDataHanding } from './utils';
+import { constructTopicEntry, getTopicDisplayName, topicDataHanding } from './utils';
 
 const urlRegex = /(https?:\/\/[^\s"'<>]+)/g;
 
@@ -23,7 +23,13 @@ export const route: Route = {
         },
     },
     features: {
-        requireConfig: false,
+        requireConfig: [
+            {
+                name: 'JIKE_REFRESHTOKEN',
+                optional: true,
+                description: '即刻 refresh token。配置后可通过鉴权接口分页抓取更多圈子内容；未配置时回退到公开页面数据。',
+            },
+        ],
         requirePuppeteer: false,
         antiCrawler: false,
         supportBT: false,
@@ -47,13 +53,15 @@ export const route: Route = {
 
 async function handler(ctx) {
     const id = ctx.req.param('id');
+    const showUid = ctx.req.param('showUid') === '1';
     const topicUrl = `https://m.okjike.com/topics/${id}`;
 
     const data = await constructTopicEntry(ctx, topicUrl);
 
-    if (data) {
+    if ('posts' in data) {
+        const topicDisplayName = getTopicDisplayName(data.topic, data.posts);
         const result = data.result;
-        result.item = topicDataHanding(data, ctx);
+        result.item = topicDataHanding(data, showUid);
         if (id === '553870e8e4b0cafb0a1bef68' || id === '55963702e4b0d84d2c30ce6f') {
             result.item = await Promise.all(
                 result.item.map(async (one) => {
@@ -76,7 +84,7 @@ async function handler(ctx) {
                         });
                     }
                     item.description = item.description.replaceAll(urlRegex, (url) => `<a href="${url}">${url}</a>`);
-                    item.title = `${data.topic.content} ${dayjs(one.pubDate).format('MM月DD日')}`;
+                    item.title = `${topicDisplayName} ${dayjs(one.pubDate).format('MM月DD日')}`;
                     return item;
                 })
             );

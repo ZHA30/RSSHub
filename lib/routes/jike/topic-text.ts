@@ -2,7 +2,7 @@ import dayjs from 'dayjs';
 
 import type { Route } from '@/types';
 
-import { constructTopicEntry } from './utils';
+import { constructTopicEntry, getTopicDisplayName } from './utils';
 
 export const route: Route = {
     path: '/topic/text/:id',
@@ -10,7 +10,13 @@ export const route: Route = {
     example: '/jike/topic/text/553870e8e4b0cafb0a1bef68',
     parameters: { id: '圈子 id, 可在即刻 web 端圈子页或 APP 分享出来的圈子页 URL 中找到' },
     features: {
-        requireConfig: false,
+        requireConfig: [
+            {
+                name: 'JIKE_REFRESHTOKEN',
+                optional: true,
+                description: '即刻 refresh token。配置后可通过鉴权接口分页抓取更多圈子内容；未配置时回退到公开页面数据。',
+            },
+        ],
         requirePuppeteer: false,
         antiCrawler: false,
         supportBT: false,
@@ -38,12 +44,13 @@ async function handler(ctx) {
 
     const data = await constructTopicEntry(ctx, topicUrl);
 
-    if (data) {
+    if ('posts' in data) {
+        const topicDisplayName = getTopicDisplayName(data.topic, data.posts);
         const result = data.result;
         result.item = data.posts.map((item) => {
             const date = dayjs(item.createdAt);
             return {
-                title: `${data.topic.content} ${date.format('MM月DD日')}`,
+                title: `${topicDisplayName} ${date.format('MM月DD日')}`,
                 description: item.content.replaceAll('\n', '<br>'),
                 pubDate: date.toDate(),
                 link: `https://m.okjike.com/originalPosts/${item.id}`,

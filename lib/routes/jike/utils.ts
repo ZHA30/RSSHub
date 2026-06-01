@@ -6,192 +6,383 @@ import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
 
 const videoAPI = 'https://api.ruguoapp.com/1.0/mediaMeta/play?type=ORIGINAL_POST';
-const topicDataHanding = (data, ctx) =>
-    data.posts.map((item) => {
-        let audioName, videoName, linkName;
+const refreshTokenAPI = 'https://api.ruguoapp.com/app_auth_tokens.refresh';
+const topicDetailAPI = 'https://api.ruguoapp.com/1.0/topics/getDetail';
+const topicFeedAPI = 'https://api.ruguoapp.com/1.0/topics/tabs/square/feed';
+const defaultTopicLimit = 30;
+const maxTopicLimit = 100;
 
-        // 获取纯文字内容 和 即刻原文链接
-        let content, link;
-        switch (item.type) {
-            case 'ORIGINAL_POST':
-                content = item.content;
-                link = `https://m.okjike.com/originalPosts/${item.id}`;
-                break;
+const pickImageUrl = (image?: { picUrl?: string; middlePicUrl?: string; thumbnailUrl?: string; pictureUrl?: string }) => image?.picUrl || image?.middlePicUrl || image?.thumbnailUrl || image?.pictureUrl;
 
-            /* case 'QUESTION':
-            content = item.title;
-            link = `https://m.okjike.com/questions/${item.id}`;
-            break;
-        case 'OFFICIAL_MESSAGE':
-            content = item.content;
-            link = `https://web.okjike.com/message-detail/${item.id}/officialMessage`;
-            break;*/
-            default:
-                content = '未知类型，请前往GitHub提交issue';
-                link = 'https://github.com/DIYgod/RSSHub/issues';
+const normalizePictureUrl = (url?: string, format?: string) => {
+    if (!url) {
+        return;
+    }
+
+    if (format === 'gif') {
+        return url.split('?imageMogr2/')[0];
+    }
+
+    return /\.[\da-z]+?\?imageMogr2/i.test(url) ? url.split('?imageMogr2/')[0] : url.replace(/thumbnail\/.+/, '');
+};
+
+type TopicData = {
+    topic: any;
+    posts: any[];
+    result?: any;
+};
+
+type TopicDataOrEmpty = TopicData | { title: string };
+
+const isNonEmptyString = (value?: string) => typeof value === 'string' && value.trim().length > 0;
+
+const pickFirstString = (...values: Array<string | undefined>) => values.find((value) => isNonEmptyString(value));
+
+const pickTopicImage = (...topics: Array<{ squarePicture?: { picUrl?: string; middlePicUrl?: string; thumbnailUrl?: string; pictureUrl?: string } } | undefined>) => {
+    for (const topic of topics) {
+        const image = pickImageUrl(topic?.squarePicture);
+        if (image) {
+            return image;
+        }
+    }
+};
+
+const getTopicFallbackFromPosts = (posts: any[] = [], topicId?: string) => {
+    for (const item of posts) {
+        for (const candidate of [item?.topic, item?.target?.topic]) {
+            if (!candidate) {
+                continue;
+            }
+
+            if (!topicId || candidate.id === topicId || candidate.topic?.id === topicId) {
+                return candidate;
+            }
+        }
+    }
+};
+
+const normalizeTopicMetadata = (topic?: any, posts: any[] = []) => {
+    const fallbackTopic = getTopicFallbackFromPosts(posts, topic?.id);
+    const normalizedTopic = topic?.topic;
+    const normalizedFallbackTopic = fallbackTopic?.topic;
+
+    return {
+        displayName:
+            pickFirstString(
+                topic?.content,
+                topic?.title,
+                topic?.name,
+                normalizedTopic?.content,
+                normalizedTopic?.title,
+                normalizedTopic?.name,
+                fallbackTopic?.content,
+                fallbackTopic?.title,
+                fallbackTopic?.name,
+                normalizedFallbackTopic?.content,
+                normalizedFallbackTopic?.title,
+                normalizedFallbackTopic?.name,
+                topic?.id,
+                fallbackTopic?.id
+            ) || '未知圈子',
+        description: pickFirstString(
+            topic?.briefIntro,
+            topic?.description,
+            normalizedTopic?.briefIntro,
+            normalizedTopic?.description,
+            fallbackTopic?.briefIntro,
+            fallbackTopic?.description,
+            normalizedFallbackTopic?.briefIntro,
+            normalizedFallbackTopic?.description
+        ),
+        image: pickTopicImage(topic, normalizedTopic, fallbackTopic, normalizedFallbackTopic),
+    };
+};
+
+const getTopicDisplayName = (topic?: { content?: string; title?: string; name?: string; id?: string }, posts: any[] = []) => normalizeTopicMetadata(topic, posts).displayName;
+
+const dedupeTopicPosts = (posts) => {
+    const seen = new Set<string>();
+
+    return posts.filter((item) => {
+        const key = item.id || item.url || item.linkInfo?.linkUrl || item.linkInfo?.originalLinkUrl;
+
+        if (!key || seen.has(key)) {
+            return false;
         }
 
-        // rss内容
-        let description = '';
-        // 作者昵称
-        let author = '';
+        seen.add(key);
+        return true;
+    });
+};
 
-        // 添加内容作者信息
-        if (item.user) {
-            author = item.user.screenName;
-            if (ctx.req.param('showUid')) {
+const getDefaultTopicLimit = () => {
+    const value = defaultTopicLimit;
+    const limit = Number.parseInt(String(value ?? ''), 10);
+    if (Number.isNaN(limit) || limit <= 0) {
+        return defaultTopicLimit;
+    }
+    return Math.min(limit, maxTopicLimit);
+};
+
+const enrichTopicPosts = (posts) =>
+    Promise.all(
+        posts.map(async (item) => {
+            if (!item.video) {
+                return item;
+            }
+
+            const videoUrl = `${videoAPI}&id=${item.id}`;
+            const videoRes = await got(videoUrl);
+            item.video = videoRes.data;
+
+            return item;
+        })
+    );
+
+const getJikeAccessToken = () => {
+    if (!config.jike?.refreshToken) {
+        return;
+    }
+
+    const cacheKey = `jike:access-token:${config.jike.refreshToken}`;
+    return cache.tryGet(
+        cacheKey,
+        async () => {
+            const { data } = await got.post(refreshTokenAPI, {
+                headers: {
+                    'x-jike-refresh-token': config.jike.refreshToken,
+                },
+            });
+            return data['x-jike-access-token'];
+        },
+        60 * 60,
+        false
+    );
+};
+
+const fetchTopicFromPage = async (url, limit: number): Promise<TopicData> => {
+    const resp = await got(url);
+    const $ = load(resp.data);
+    const raw = $('[type = "application/json"]').html();
+    const data = JSON.parse(raw ?? '{}').props.pageProps;
+    data.posts = await enrichTopicPosts(dedupeTopicPosts(data.posts).slice(0, limit));
+    return data;
+};
+
+const fetchTopicWithAuth = async (id: string, limit: number): Promise<TopicData | undefined> => {
+    const accessToken = await getJikeAccessToken();
+    if (!accessToken) {
+        return;
+    }
+
+    const headers = {
+        'x-jike-access-token': accessToken,
+    };
+
+    const topic = await cache.tryGet(
+        `jike:topic-detail:${id}`,
+        async () => {
+            const { data } = await got(topicDetailAPI, {
+                headers,
+                searchParams: {
+                    id,
+                },
+            });
+            return data;
+        },
+        config.cache.routeExpire,
+        false
+    );
+
+    const posts: any[] = [];
+    let loadMoreKey;
+    let lastSerializedLoadMoreKey;
+
+    while (dedupeTopicPosts(posts).length < limit) {
+        const previousUniqueCount = dedupeTopicPosts(posts).length;
+        // Pagination depends on the previous page's loadMoreKey, so requests must stay sequential.
+        // oxlint-disable-next-line no-await-in-loop
+        const { data } = await got.post(topicFeedAPI, {
+            headers,
+            json: {
+                topicId: id,
+                limit: 25,
+                ...(loadMoreKey ? { loadMoreKey } : {}),
+            },
+        });
+
+        if (!Array.isArray(data.data) || data.data.length === 0) {
+            break;
+        }
+
+        posts.push(...data.data);
+
+        const nextSerializedLoadMoreKey = data.loadMoreKey ? JSON.stringify(data.loadMoreKey) : undefined;
+        const uniqueCount = dedupeTopicPosts(posts).length;
+
+        if (!data.loadMoreKey) {
+            break;
+        }
+
+        if (uniqueCount === previousUniqueCount || nextSerializedLoadMoreKey === lastSerializedLoadMoreKey) {
+            break;
+        }
+
+        lastSerializedLoadMoreKey = nextSerializedLoadMoreKey;
+        loadMoreKey = data.loadMoreKey;
+    }
+
+    return {
+        topic,
+        posts: await enrichTopicPosts(dedupeTopicPosts(posts).slice(0, limit)),
+    };
+};
+
+const topicDataHanding = (data, showUid = false) =>
+    data.posts
+        .map((item) => {
+            let audioName, videoName, linkName;
+
+            let content = item.content || item.title || item.linkInfo?.title || '';
+            let link = item.url;
+            switch (item.type) {
+                case 'ORIGINAL_POST':
+                    content = item.content || content;
+                    link = `https://m.okjike.com/originalPosts/${item.id}`;
+                    break;
+                default:
+                    link = link || (item.id ? `https://m.okjike.com/originalPosts/${item.id}` : undefined);
+            }
+
+            let description = '';
+            const author = item.user?.screenName ?? '';
+
+            if (item.user && showUid) {
                 description += `<span>用户昵称：${author} <br> Username：${item.user.username}</span><br>`;
             }
-        }
 
-        if (item.linkInfo) {
-            const linkUrl = item.linkInfo.originalLinkUrl || item.linkInfo.linkUrl;
+            if (item.linkInfo) {
+                const linkUrl = item.linkInfo.originalLinkUrl || item.linkInfo.linkUrl;
 
-            // 对于即刻抓取的微信公众号文章 特殊处理
-            // 此时 Rss原文链接 变为 微信公众号链接
-            if (new URL(linkUrl).host === 'mp.weixin.qq.com') {
-                link = linkUrl;
-            }
+                if (new URL(linkUrl).host === 'mp.weixin.qq.com') {
+                    link = linkUrl;
+                }
 
-            // 1. 音频
-            const audioObject = item.linkInfo.audio || item.audio;
-            if (audioObject) {
-                const audioImage = audioObject.image.picUrl || audioObject.image.thumbnailUrl;
-                const audioLink = linkUrl;
-                const audioTitle = audioObject.title;
-                const audioAuthor = audioObject.author;
-                audioName = `${audioTitle} - ${audioAuthor}`;
-                description += `
-            <img src="${audioImage}">
+                const audioObject = item.linkInfo.audio || item.audio;
+                if (audioObject) {
+                    const audioImage = pickImageUrl(audioObject.image);
+                    const audioLink = linkUrl;
+                    const audioTitle = audioObject.title;
+                    const audioAuthor = audioObject.author;
+                    audioName = `${audioTitle} - ${audioAuthor}`;
+                    description += `
+            ${audioImage ? `<img src="${audioImage}">` : ''}
             <a href="${audioLink}">${audioName}</a>
         `;
-            }
+                }
 
-            // 2. 视频
-            const videoObject = item.linkInfo.video || item.video;
-            if (videoObject) {
-                const videoImage = videoObject.image.picUrl || videoObject.image.thumbnailUrl;
-                const videoLink = linkUrl;
-                const videoDuration = Math.floor(videoObject.duration / 60000);
-                videoName = item.linkInfo.title;
-                description += `
-            <img src="${videoImage}">
+                const videoObject = item.linkInfo.video || item.video;
+                if (videoObject) {
+                    const videoImage = pickImageUrl(videoObject.image);
+                    const videoLink = linkUrl;
+                    const videoDuration = Math.floor(videoObject.duration / 60000);
+                    videoName = item.linkInfo.title;
+                    description += `
+            ${videoImage ? `<img src="${videoImage}">` : ''}
             <a href="${videoLink}">${videoName || '观看视频'} - 约${videoDuration}分钟</a>
         `;
-            }
+                }
 
-            // 3. 链接
-            if (!audioObject && !videoObject && linkUrl) {
-                // 部分链接有标题
-                linkName = item.linkInfo.title;
-                const linkTitle = linkName || '访问原文';
-                // 部分链接有缩略图
-                const linkImage = item.linkInfo.pictureUrl;
-                const imageTag = `<img src="${linkImage}">`;
-                description += `
+                if (!audioObject && !videoObject && linkUrl) {
+                    linkName = item.linkInfo.title;
+                    const linkTitle = linkName || '访问原文';
+                    const linkImage = item.linkInfo.pictureUrl;
+                    const imageTag = `<img src="${linkImage}">`;
+                    description += `
             ${linkImage ? imageTag : ''}
             <a href="${linkUrl}">${linkTitle}</a>
         `;
-            }
-        }
-
-        // 4. 文字内容
-        description += description ? `<br>${content}` : content;
-
-        // 5. 图片
-        if (item.pictures) {
-            for (const pic of item.pictures) {
-                if (pic.format === 'gif') {
-                    description += `<img src="${pic.picUrl.split('?imageMogr2/')[0]}">`;
-                } else {
-                    // jpeg, bmp, png, gif, webp
-                    // https://developer.mozilla.org/en-US/docs/Web/HTTP/Basics_of_HTTP/MIME_types
-                    // let type = 'jpeg';
-                    // switch (pic.format) {
-                    //     case 'bmp':
-                    //         type = 'bmp';
-                    //         break;
-                    //     case 'png':
-                    //         type = 'png';
-                    //         break;
-                    //     default:
-                    //         break;
-                    // }
-                    const imgUrl = /\.[\da-z]+?\?imageMogr2/.test(pic.picUrl) ? pic.picUrl.split('?imageMogr2/')[0] : pic.picUrl.replace(/thumbnail\/.+/, '');
-                    description += `<br><img src="${imgUrl}">`;
-                    // description += `<br><picture><source srcset="${
-                    //     pic.picUrl.split('/thumbnail/')[0]
-                    // }/strip/format/webp" type="image/webp"><source srcset="${imgUrl}" type="image/${type}"><img src="${imgUrl}"></picture>`;
                 }
             }
-        }
 
-        // 6. 视频
-        if (item.video) {
-            description += `<br><video src="${item.video.url}" controls></video>`;
-        }
+            if (content) {
+                description += description ? `<br>${content}` : content;
+            }
 
-        // rss标题
-        // 优先将音频和视频名作为标题
-        // 其次将正文内容作为标题
-        // 若都没有 则是推送型消息，将连接标题作为主题
-        // “无题” fallback
-        const title = audioName || videoName || content || linkName || '无题';
+            if (item.pictures) {
+                for (const pic of item.pictures) {
+                    const imgUrl = normalizePictureUrl(pic.picUrl, pic.format);
 
-        return {
-            title,
-            description: description.trim().replaceAll('\n', '<br>'),
-            pubDate: parseDate(item.createdAt),
-            author,
-            link,
-        };
-    });
-const constructTopicEntry = async (ctx, url) => {
-    const data = await cache.tryGet(
-        url,
-        async () => {
-            const resp = await got(url);
-            const html = resp.data;
-            const $ = load(html);
-            const raw = $('[type = "application/json"]').html();
-            const data = JSON.parse(raw).props.pageProps;
-            data.posts = await Promise.all(
-                data.posts.map(async (item) => {
-                    if (!item.video) {
-                        return item;
+                    if (imgUrl) {
+                        description += `<br><img src="${imgUrl}">`;
                     }
+                }
+            }
 
-                    const videoUrl = `${videoAPI}&id=${item.id}`;
-                    const videoRes = await got(videoUrl);
-                    item.video = videoRes.data;
+            if (item.video) {
+                description += `<br><video src="${item.video.url}" controls></video>`;
+            }
 
-                    return item;
-                })
-            );
+            const title = audioName || videoName || content || linkName;
 
-            return data;
+            if (!title && !description && !link) {
+                return;
+            }
+
+            return {
+                title: title || '无题',
+                description: description.trim().replaceAll('\n', '<br>'),
+                pubDate: parseDate(item.createdAt),
+                author,
+                link: link || data.result.link,
+            };
+        })
+        .filter(Boolean);
+
+const constructTopicEntry = async (ctx, url): Promise<TopicDataOrEmpty> => {
+    const id = ctx.req.param('id');
+    const itemLimit = getDefaultTopicLimit();
+    const useAuth = Boolean(config.jike?.refreshToken);
+    const cacheKey = useAuth ? `jike:topic:${id}:${itemLimit}` : `${url}:${itemLimit}`;
+
+    const data = await cache.tryGet(
+        cacheKey,
+        async () => {
+            if (useAuth) {
+                try {
+                    const authData = await fetchTopicWithAuth(id, itemLimit);
+                    if (authData) {
+                        return authData;
+                    }
+                } catch {
+                    // Fall back to page scraping when auth pagination is temporarily blocked.
+                }
+            }
+
+            return fetchTopicFromPage(url, itemLimit);
         },
-        false,
-        config.cache.routeExpire
+        config.cache.routeExpire,
+        false
     );
 
-    if (data.length === 0) {
+    if (!data?.posts?.length) {
         return {
             title: '主题 ID 不存在，或该主题暂无内容',
         };
     }
 
     const topic = data.topic;
+    const topicMetadata = normalizeTopicMetadata(topic, data.posts);
+    const topicDisplayName = topicMetadata.displayName;
 
     data.result = {
-        title: `${topic.content} - 即刻圈子`,
+        title: `${topicDisplayName} - 即刻圈子`,
         link: url,
-        description: topic.briefIntro,
-        image: topic.squarePicture.picUrl || topic.squarePicture.middlePicUrl || topic.squarePicture.thumbnailUrl,
-        // item: topicDataHanding(data),
+        description: topicMetadata.description,
+        image: topicMetadata.image,
     };
 
     return data;
 };
 
-export { constructTopicEntry, topicDataHanding };
+export { constructTopicEntry, getTopicDisplayName, topicDataHanding };
