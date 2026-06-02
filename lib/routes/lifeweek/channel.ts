@@ -10,15 +10,30 @@ const articleRootUrl = 'https://www.lifeweek.com.cn/article';
 
 export const route: Route = {
     path: '/channel/:id',
+    categories: ['traditional-media'],
+    example: '/lifeweek/channel/1',
+    parameters: {
+        id: '频道 ID，可从频道页 URL 中获取',
+    },
+    features: {
+        requireConfig: false,
+        requirePuppeteer: false,
+        antiCrawler: false,
+        supportBT: false,
+        supportPodcast: false,
+        supportScihub: false,
+    },
     radar: [
         {
-            source: ['lifeweek.com.cn/column/:channel'],
-            target: '/channel/:channel',
+            source: ['lifeweek.com.cn/column/:id'],
+            target: '/channel/:id',
         },
     ],
-    name: 'Unknown',
-    maintainers: [],
+    name: '频道',
+    maintainers: ['ZHA30'],
     handler,
+    url: 'lifeweek.com.cn/column',
+    description: '三联生活网频道文章列表。',
 };
 
 async function handler(ctx) {
