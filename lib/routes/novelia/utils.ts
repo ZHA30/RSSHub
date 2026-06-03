@@ -1,5 +1,13 @@
+import MarkdownIt from 'markdown-it';
+
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+
+const md = MarkdownIt({
+    html: true,
+    linkify: true,
+    breaks: true,
+});
 
 export const rootUrl = 'https://n.novelia.cc';
 
@@ -108,13 +116,7 @@ export const relativeDate = (timestamp?: number) => {
     return `${Math.floor(seconds / oneYear)} 年前`;
 };
 
-const htmlEscape = (text: string) => text.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('"', '&quot;').replaceAll("'", '&#39;');
-
-export const markdownToHtml = (content = '') =>
-    htmlEscape(content)
-        .replaceAll(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
-        .replaceAll(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')
-        .replaceAll('\n', '<br>');
+export { md };
 
 export async function fetchApi<T>(path: string): Promise<T> {
     return await ofetch<T>(`${rootUrl}${path}`, {

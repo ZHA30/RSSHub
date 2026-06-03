@@ -2,7 +2,7 @@ import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import { parseDate } from '@/utils/parse-date';
 
-import { defaultNovelProviders, displayTitle, fetchApi, formatNumber, markdownToHtml, type NovelDetailResponse, type NovelListItem, type NovelListResponse, relativeDate, rootUrl } from './utils';
+import { defaultNovelProviders, displayTitle, fetchApi, formatNumber, md, type NovelDetailResponse, type NovelListItem, type NovelListResponse, relativeDate, rootUrl } from './utils';
 
 const typeMap = {
     all: '0',
@@ -109,7 +109,7 @@ async function getNovelItem(item: NovelListItem): Promise<DataItem> {
             ]
                 .filter(Boolean)
                 .join(' / '),
-            markdownToHtml(detail.introductionZh),
+            md.render(detail.introductionZh ?? ''),
         ]
             .filter(Boolean)
             .join('<br>'),

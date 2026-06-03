@@ -1,7 +1,7 @@
 import type { DataItem } from '@/types';
 import cache from '@/utils/cache';
 
-import { type ArticleDetailResponse, type ArticleListResponse, fetchApi, markdownToHtml, rootUrl, unixDate } from './utils';
+import { type ArticleDetailResponse, type ArticleListResponse, fetchApi, md, rootUrl, unixDate } from './utils';
 
 const categoryMap = {
     general: {
@@ -38,7 +38,7 @@ export async function getForumList(ctx) {
                     pubDate: unixDate(item.createAt),
                     updated: unixDate(item.updateAt),
                     category: item.category ? [item.category] : undefined,
-                    description: markdownToHtml(detail.content),
+                    description: md.render(detail.content ?? ''),
                 };
             })
         )
@@ -68,7 +68,7 @@ export async function getForumPost(ctx) {
                 pubDate: unixDate(response.createAt),
                 updated: unixDate(response.updateAt),
                 category: response.category ? [response.category] : undefined,
-                description: markdownToHtml(response.content),
+                description: md.render(response.content ?? ''),
             },
         ],
     };
