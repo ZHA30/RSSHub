@@ -11,7 +11,7 @@ const detailApiUrl = 'https://api-public.lingowhale.com/api/lingowhale/v1/entry_
 const webBaseUrl = 'https://lingowhale.com';
 const defaultLimit = 10;
 const maxLimit = 50;
-const entryCacheVersion = 'v2';
+const entryCacheVersion = 'v3';
 const removableMetadataAttrs = ['position_id', 'data-pm-slice', 'data-deeplang-h1', 'data-deeplang-h2', 'data-deeplang-h3', 'data-deeplang-legend', 'data-deeplang-intro'];
 const removableCommonAttrs = ['class', 'id', 'leaf', 'contenteditable', 'tabindex', 'subtree'];
 
@@ -71,6 +71,8 @@ type LingowhaleEntryDetailData = {
     resource?: LingowhaleResource;
 };
 
+type LinkMode = 'original' | 'render';
+
 export const route: Route = {
     path: '/channel/:channelId',
     name: '频道全文',
@@ -89,7 +91,7 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    description: '通过语鲸公开频道接口抓取频道内容，并用公开详情接口补全文章正文。',
+    description: '通过语鲸公开频道接口抓取频道内容，并用公开详情接口补全文章正文。可通过 `?link=render` 将条目链接切换为语鲸阅读页，默认为原网页链接。',
     handler,
 };
 
@@ -107,6 +109,8 @@ const getFeedHeaders = () => ({
     'content-type': 'application/json',
     imei: 'fingerPrint-web',
 });
+
+const getLinkMode = (link?: string): LinkMode => (link === 'render' ? 'render' : 'original');
 
 const getSurfaceUrl = (surfaceUrl?: string | { url?: string }) => (typeof surfaceUrl === 'string' ? surfaceUrl : surfaceUrl?.url);
 
@@ -214,6 +218,8 @@ const fetchEntryDetail = async (entryId: string, entryType: number) => {
 async function handler(ctx): Promise<Data> {
     const channelId = ctx.req.param('channelId');
     const limit = clampLimit(ctx.req.query('limit'));
+    const linkMode = getLinkMode(ctx.req.query('link'));
+    ctx.header('Cache-Control', 'no-cache');
 
     const feedResponse = await ofetch<LingowhaleApiResponse<LingowhaleFeedListData>>(feedApiUrl, {
         method: 'POST',
@@ -233,21 +239,23 @@ async function handler(ctx): Promise<Data> {
     const firstChannel = feedList[0]?.channel;
 
     const items: DataItem[] = await Promise.all(
-        feedList.slice(0, limit).map((entry) =>
-            cache.tryGet(`lingowhale:entry:${entryCacheVersion}:${entry.entry_id}`, async () => {
-                const detail = await fetchEntryDetail(entry.entry_id, entry.entry_type);
+        feedList.slice(0, limit).map(async (entry) => {
+            const detail = await cache.tryGet(`lingowhale:entry:${entryCacheVersion}:${entry.entry_id}`, () => fetchEntryDetail(entry.entry_id, entry.entry_type));
+            const rid = detail.entry_id || entry.entry_id;
+            const renderUrl = `${webBaseUrl}/reader/web/render?rid=${rid}`;
+            const originalUrl = detail.orig_url || renderUrl;
+            const pubTime = detail.pub_time ?? entry.pub_time;
 
-                return {
-                    title: detail.title || entry.title,
-                    link: detail.orig_url || webBaseUrl,
-                    guid: detail.entry_id || entry.entry_id,
-                    pubDate: new Date(((detail.pub_time ?? entry.pub_time) || 0) * 1000),
-                    author: detail.author?.name || entry.info_source?.info_source_name,
-                    description: extractDescription(detail.html, detail.description || detail.abstract || entry.abstract || entry.description),
-                    image: getSurfaceUrl(detail.surface_url) || getSurfaceUrl(entry.surface_url),
-                };
-            })
-        )
+            return {
+                title: detail.title || entry.title,
+                link: linkMode === 'render' ? renderUrl : originalUrl,
+                guid: rid,
+                pubDate: pubTime ? new Date(pubTime * 1000) : undefined,
+                author: detail.author?.name || entry.info_source?.info_source_name,
+                description: extractDescription(detail.html, detail.description || detail.abstract || entry.abstract || entry.description),
+                image: getSurfaceUrl(detail.surface_url) || getSurfaceUrl(entry.surface_url),
+            };
+        })
     );
 
     return {
