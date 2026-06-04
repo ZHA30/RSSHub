@@ -193,8 +193,10 @@ async function handler(ctx) {
                 data_content = (await cache.getArticleDataFromCvid(data.id, uid)).description;
             }
 
+            const title = getTitle(data);
+
             return {
-                title: getTitle(data),
+                title: author ? `${author}:${title}` : title,
                 author,
                 description: (() => {
                     const description = parsed.new_desc || data_content || getDes(data);
