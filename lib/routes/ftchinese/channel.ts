@@ -1,6 +1,6 @@
 import type { Route } from '@/types';
 
-import utils from './utils';
+import { getChannelData } from './utils';
 
 export const route: Route = {
     path: '/:language/:channel?',
@@ -15,7 +15,7 @@ export const route: Route = {
         supportPodcast: false,
         supportScihub: false,
     },
-    name: 'FT 中文网',
+    name: '频道',
     maintainers: ['HenryQW', 'xyqfer'],
     handler,
     description: `::: tip
@@ -33,9 +33,8 @@ export const route: Route = {
 };
 
 async function handler(ctx) {
-    return await utils.getData({
+    return await getChannelData({
         site: ctx.req.param('language') === 'simplified' ? 'www' : 'big5',
         channel: ctx.req.param('channel'),
-        ctx,
     });
 }
