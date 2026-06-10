@@ -8,6 +8,45 @@ import timezone from '@/utils/timezone';
 
 const baseUrl = 'https://www.tongli.com.tw/';
 
+export { baseUrl };
+
+export async function enrichBookDetail(item: DataItem, prefixDescription?: string, includePubDate = true) {
+    return await cache.tryGet(`tongli:books:${item.link}`, async () => {
+        const { data: response } = await got(item.link!);
+        const $ = load(response);
+
+        const description = $('#ContentPlaceHolder1_Description').html();
+        const pubDateText = $('#ContentPlaceHolder1_UplineDate').text().trim();
+        const info = $('.bi_c').first();
+
+        info.find('script, style, noscript').remove();
+        info.find('[style]').removeAttr('style');
+
+        info.find('a[href]').each((_, element) => {
+            const $element = $(element);
+            const href = $element.attr('href');
+
+            if (href) {
+                $element.attr('href', new URL(href, item.link).href);
+            }
+        });
+        info.find('img[src]').each((_, element) => {
+            const $element = $(element);
+            const src = $element.attr('src');
+
+            if (src) {
+                $element.attr('src', new URL(src, item.link).href);
+            }
+        });
+
+        return {
+            ...item,
+            description: [prefixDescription, item.description, description ? `<p>${description}</p>` : undefined, info.html()].filter(Boolean).join(''),
+            pubDate: includePubDate && pubDateText ? timezone(parseDate(pubDateText, 'YYYY/M/D'), +8) : undefined,
+        };
+    });
+}
+
 export async function getBooks(path: string, title: string) {
     const currentUrl = new URL(path, baseUrl);
 
@@ -48,44 +87,7 @@ export async function getBooks(path: string, title: string) {
             };
         }) as DataItem[];
 
-    const items = await Promise.all(
-        list.map((item) =>
-            cache.tryGet(`tongli:books:${item.link}`, async () => {
-                const { data: response } = await got(item.link!);
-                const $ = load(response);
-
-                const description = $('#ContentPlaceHolder1_Description').html();
-                const pubDateText = $('#ContentPlaceHolder1_UplineDate').text().trim();
-                const info = $('.bi_c').first();
-
-                info.find('script, style, noscript').remove();
-                info.find('[style]').removeAttr('style');
-
-                info.find('a[href]').each((_, element) => {
-                    const $element = $(element);
-                    const href = $element.attr('href');
-
-                    if (href) {
-                        $element.attr('href', new URL(href, item.link).href);
-                    }
-                });
-                info.find('img[src]').each((_, element) => {
-                    const $element = $(element);
-                    const src = $element.attr('src');
-
-                    if (src) {
-                        $element.attr('src', new URL(src, item.link).href);
-                    }
-                });
-
-                return {
-                    ...item,
-                    description: [item.description, description ? `<p>${description}</p>` : undefined, info.html()].filter(Boolean).join(''),
-                    pubDate: pubDateText ? timezone(parseDate(pubDateText, 'YYYY/M/D'), +8) : undefined,
-                };
-            })
-        )
-    );
+    const items = await Promise.all(list.map((item) => enrichBookDetail(item)));
 
     return {
         title: `東立出版社 - ${title}`,
