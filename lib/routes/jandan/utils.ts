@@ -58,12 +58,21 @@ const commentSections = {
 
 const topTypes = {
     '4hr': '4小时热门',
-    pic3days: '3天内无聊图',
-    pic7days: '7天内无聊图',
+    pic3days: '3天热门无聊图',
+    pic7days: '7天热门无聊图',
+    pic: '热门无聊图',
+    treehole: '热门树洞',
+    ooxx: '热门随手拍',
 } as const;
 
 type CommentSection = keyof typeof commentSections;
 type TopType = keyof typeof topTypes;
+
+const topSectionIds: Partial<Record<TopType, string>> = {
+    pic: commentSections.pic.id,
+    treehole: commentSections.treehole.id,
+    ooxx: commentSections.ooxx.id,
+};
 
 const normalizeImageUrl = (url?: string) => {
     if (!url) {
@@ -287,7 +296,9 @@ export const normalizeTopType = (type?: string): TopType => (type && type in top
 export const handleTopSection = async (type?: string) => {
     const topType = normalizeTopType(type);
     const title = `热榜 - ${topTypes[topType]}`;
-    const response = await getApi<TopApiResponse>(`${rootUrl}/api/top/${topType}`, `${rootUrl}/top`);
+    const sectionId = topSectionIds[topType];
+    const apiUrl = sectionId ? `${rootUrl}/api/top/post/${sectionId}` : `${rootUrl}/api/top/${topType}`;
+    const response = await getApi<TopApiResponse>(apiUrl, `${rootUrl}/top`);
 
     if (response.code !== 0 || !Array.isArray(response.data)) {
         throw new Error(`Failed to fetch ${title}: ${response.msg}`);

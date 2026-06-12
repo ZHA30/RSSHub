@@ -54,12 +54,24 @@ export const route: Route = {
                     value: '4hr',
                 },
                 {
-                    label: '3天内无聊图',
+                    label: '3天热门无聊图',
                     value: 'pic3days',
                 },
                 {
-                    label: '7天内无聊图',
+                    label: '7天热门无聊图',
                     value: 'pic7days',
+                },
+                {
+                    label: '热门无聊图',
+                    value: 'pic',
+                },
+                {
+                    label: '热门树洞',
+                    value: 'treehole',
+                },
+                {
+                    label: '热门随手拍',
+                    value: 'ooxx',
                 },
             ],
         },
