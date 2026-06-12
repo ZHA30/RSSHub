@@ -1,8 +1,8 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import ofetch from '@/utils/ofetch';
 
+import { fetchWithCookie } from './utils';
 import utils from './utils';
 
 export const route: Route = {
@@ -48,12 +48,12 @@ export const route: Route = {
 async function handler(ctx) {
     const id = ctx.req.param('id');
     const channelUrl = `https://m.thepaper.cn/channel/${id}`;
-    const channelUrlResp = await ofetch(channelUrl);
+    const channelUrlResp = await fetchWithCookie(channelUrl);
     const $ = load(channelUrlResp);
     const nextData = $('#__NEXT_DATA__').text();
     const channelUrlData = JSON.parse(nextData);
 
-    const resp = await ofetch('https://api.thepaper.cn/contentapi/nodeCont/getByChannelId', {
+    const resp = await fetchWithCookie('https://api.thepaper.cn/contentapi/nodeCont/getByChannelId', {
         method: 'POST',
         body: {
             channelId: id,

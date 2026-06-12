@@ -2,8 +2,17 @@ import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import cache from '@/utils/cache';
-import ofetch from '@/utils/ofetch';
+import { default as ofetch } from '@/utils/ofetch';
 import { parseDate, parseRelativeDate } from '@/utils/parse-date';
+
+const fetchWithCookie = <T = any>(url: string, options?: Record<string, any>): Promise<T> =>
+    ofetch<T>(url, {
+        ...options,
+        headers: {
+            Cookie: '_c_WBKFRo=1',
+            ...options?.headers,
+        },
+    });
 
 const defaultRssItem = (item) => ({
     title: item.name,
@@ -17,6 +26,7 @@ const defaultRssItem = (item) => ({
     },
 });
 
+export { fetchWithCookie };
 export default {
     ProcessItem: (item, ctx) => {
         const useOldMode = ctx.req.query('old') === 'yes';
@@ -26,7 +36,7 @@ export default {
         }
         const itemUrl = `https://m.thepaper.cn/${item.cornerLabelDesc && item.cornerLabelDesc === '短剧' ? 'series' : 'detail'}/${item.contId}`;
         return cache.tryGet(`${itemUrl}${useOldMode ? ':old' : ''}`, async () => {
-            const res = await ofetch(itemUrl);
+            const res = await fetchWithCookie(itemUrl);
             const $ = load(res);
             const nextData = $('#__NEXT_DATA__').text();
             const data = JSON.parse(nextData);

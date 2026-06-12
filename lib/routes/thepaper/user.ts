@@ -2,8 +2,9 @@ import * as cheerio from 'cheerio';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
-import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+
+import { fetchWithCookie } from './utils';
 
 export const route: Route = {
     path: '/user/:pphId',
@@ -109,14 +110,14 @@ async function handler(ctx) {
     const { pphId } = ctx.req.param();
 
     const mobileBuildId = (await cache.tryGet('thepaper:m:buildId', async () => {
-        const response = await ofetch('https://m.thepaper.cn');
+        const response = await fetchWithCookie('https://m.thepaper.cn');
         const $ = cheerio.load(response);
         const nextData = JSON.parse($('script#__NEXT_DATA__').text());
         return nextData.buildId;
     })) as string;
 
     const userInfo = (await cache.tryGet(`thepaper:user:${pphId}`, async () => {
-        const response = await ofetch(`https://api.thepaper.cn/userservice/user/homePage/${pphId}`, {
+        const response = await fetchWithCookie(`https://api.thepaper.cn/userservice/user/homePage/${pphId}`, {
             headers: {
                 'Client-Type': '2',
                 Origin: 'https://m.thepaper.cn',
@@ -126,7 +127,7 @@ async function handler(ctx) {
         return response.userInfo;
     })) as AuthorInfo;
 
-    const response = await ofetch<PPHContentResponse>('https://api.thepaper.cn/contentapi/cont/pph/user', {
+    const response = await fetchWithCookie<PPHContentResponse>('https://api.thepaper.cn/contentapi/cont/pph/user', {
         method: 'POST',
         body: {
             pageSize: 10,
@@ -150,7 +151,7 @@ async function handler(ctx) {
     const items = await Promise.all(
         list.map((item) =>
             cache.tryGet(item.link, async () => {
-                const response = await ofetch(`https://m.thepaper.cn/_next/data/${mobileBuildId}/detail/${item.contId}.json`, {
+                const response = await fetchWithCookie(`https://m.thepaper.cn/_next/data/${mobileBuildId}/detail/${item.contId}.json`, {
                     query: {
                         id: item.contId,
                     },

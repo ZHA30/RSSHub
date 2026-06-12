@@ -1,6 +1,6 @@
 import type { Route } from '@/types';
-import ofetch from '@/utils/ofetch';
 
+import { fetchWithCookie } from './utils';
 import utils from './utils';
 
 export const route: Route = {
@@ -25,7 +25,7 @@ async function handler(ctx) {
     const { pphId } = ctx.req.param();
     const pageSize = Number.parseInt(ctx.req.query('limit') ?? '10', 10);
 
-    const response = await ofetch('https://api.thepaper.cn/contentapi/cont/pph/gov', {
+    const response = await fetchWithCookie('https://api.thepaper.cn/contentapi/cont/pph/gov', {
         method: 'POST',
         body: {
             pageNum: 1,

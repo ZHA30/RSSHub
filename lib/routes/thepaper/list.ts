@@ -1,8 +1,8 @@
 import { load } from 'cheerio';
 
 import type { Route } from '@/types';
-import ofetch from '@/utils/ofetch';
 
+import { fetchWithCookie } from './utils';
 import utils from './utils';
 
 export const route: Route = {
@@ -126,12 +126,12 @@ export const route: Route = {
 async function handler(ctx) {
     const id = ctx.req.param('id');
     const listUrl = `https://m.thepaper.cn/list/${id}`;
-    const listUrlResp = await ofetch(listUrl);
+    const listUrlResp = await fetchWithCookie(listUrl);
     const $ = load(listUrlResp);
     const nextData = $('#__NEXT_DATA__').text();
     const listUrlData = JSON.parse(nextData);
 
-    const resp = await ofetch('https://api.thepaper.cn/contentapi/nodeCont/getByNodeIdPortal', {
+    const resp = await fetchWithCookie('https://api.thepaper.cn/contentapi/nodeCont/getByNodeIdPortal', {
         method: 'POST',
         body: {
             nodeId: id,
