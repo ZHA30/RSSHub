@@ -186,7 +186,8 @@ const parseArticleList = (html: string) => {
 
 const enrichArticle = (item: DataItem) =>
     cache.tryGet(`jandan:article:${item.link}`, async () => {
-        const html = await get<string>(item.link || rootUrl);
+        const articleUrl = new URL(item.link || '', rootUrl).href;
+        const html = await get<string>(articleUrl);
         const $ = load(html);
         $('.post-content script, .post-content style').remove();
 
