@@ -11,7 +11,7 @@ const detailApiUrl = 'https://api-public.lingowhale.com/api/lingowhale/v1/entry_
 const webBaseUrl = 'https://lingowhale.com';
 const defaultLimit = 10;
 const maxLimit = 50;
-const entryCacheVersion = 'v3';
+const entryCacheVersion = 'v4';
 const removableMetadataAttrs = ['position_id', 'data-pm-slice', 'data-deeplang-h1', 'data-deeplang-h2', 'data-deeplang-h3', 'data-deeplang-legend', 'data-deeplang-intro'];
 const removableCommonAttrs = ['class', 'id', 'leaf', 'contenteditable', 'tabindex', 'subtree'];
 
@@ -114,6 +114,8 @@ const getLinkMode = (link?: string): LinkMode => (link === 'render' ? 'render' :
 
 const getSurfaceUrl = (surfaceUrl?: string | { url?: string }) => (typeof surfaceUrl === 'string' ? surfaceUrl : surfaceUrl?.url);
 
+const isExternalHtmlArchive = (value?: string) => typeof value === 'string' && /^https?:\/\/\S+\.html\.gz(?:[?#]\S*)?$/i.test(value.trim());
+
 const stripColorStyles = (style?: string) => {
     if (!style) {
         return;
@@ -199,6 +201,17 @@ const extractDescription = (html?: string, fallback?: string) => {
     return bodyHtml.replaceAll(/\sreferrerpolicy="[^"]*"/g, '');
 };
 
+const getDescription = (detail: LingowhaleResource, entry: LingowhaleFeedItem) => {
+    const fallback = detail.description || detail.abstract || entry.abstract || entry.description;
+    const description = extractDescription(detail.html, fallback);
+
+    if (isExternalHtmlArchive(description)) {
+        return fallback ?? '';
+    }
+
+    return description;
+};
+
 const fetchEntryDetail = async (entryId: string, entryType: number) => {
     const response = await ofetch<LingowhaleApiResponse<LingowhaleEntryDetailData>>(detailApiUrl, {
         method: 'POST',
@@ -252,7 +265,7 @@ async function handler(ctx): Promise<Data> {
                 guid: rid,
                 pubDate: pubTime ? new Date(pubTime * 1000) : undefined,
                 author: detail.author?.name || entry.info_source?.info_source_name,
-                description: extractDescription(detail.html, detail.description || detail.abstract || entry.abstract || entry.description),
+                description: getDescription(detail, entry),
                 image: getSurfaceUrl(detail.surface_url) || getSurfaceUrl(entry.surface_url),
             };
         })
