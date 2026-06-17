@@ -1,10 +1,45 @@
 import { load } from 'cheerio';
 
-import type { Route } from '@/types';
+import type { Data, DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
-import timezone from '@/utils/timezone';
+
+const baseUrl = 'https://www.yomiuri.co.jp';
+
+type ListItem = {
+    title: string;
+    link: string;
+    pubDate?: Date;
+    locked: number;
+};
+
+const categoryMap = new Map([
+    ['news', '速報ニュース一覧'],
+    ['national', '社会'],
+    ['politics', '政治'],
+    ['economy', '経済'],
+    ['sports', 'スポーツ'],
+    ['world', '国際'],
+    ['local', '地域'],
+    ['science', '科学・IT'],
+    ['culture', 'エンタメ・文化'],
+    ['life', 'ライフ'],
+    ['medical', '医療・健康'],
+    ['kyoiku', '教育・就活'],
+    ['election', '選挙・世論調査'],
+    ['igoshougi', '囲碁・将棋'],
+    ['editorial', '社説'],
+    ['koushitsu', '皇室'],
+]);
+
+const resolveLink = (link: string | undefined, base: string) => {
+    if (!link) {
+        return;
+    }
+
+    return new URL(link, base).toString();
+};
 
 export const route: Route = {
     path: '/:category?',
@@ -49,75 +84,122 @@ export const route: Route = {
 | 皇室           | koushitsu |`,
 };
 
-async function handler(ctx) {
+async function handler(ctx): Promise<Data> {
     const { category = 'news' } = ctx.req.param();
-    const url = `https://www.yomiuri.co.jp/${category}`;
+    const url = `${baseUrl}/${category}/`;
 
     const response = await got(url);
     const data = response.data;
     const $ = load(data);
 
-    let list;
+    let list: ListItem[] = [];
     if (category === 'news') {
         list = $('.news-top-latest__list .news-top-latest__list-item__inner')
             .toArray()
-            .map((item) => {
-                item = $(item);
-                const a = item.find('h3 a');
+            .map((element) => {
+                const item = $(element);
+                const a = item.find('h3 a').first();
+                const link = resolveLink(a.attr('href'), baseUrl);
+                const pubDate = item.find('time').attr('datetime');
+
+                if (!link) {
+                    return;
+                }
+
                 return {
-                    title: a.text(),
-                    link: a.attr('href'),
-                    pubDate: timezone(parseDate(item.find('time').attr('datetime')), +9),
+                    title: a.text().trim(),
+                    link,
+                    pubDate: pubDate ? parseDate(pubDate) : undefined,
                     locked: item.find('.icon-locked').length,
-                };
-            });
+                } satisfies ListItem;
+            })
+            .filter(Boolean) as ListItem[];
     } else {
         $('.p-category-reading-recommend').remove();
-        list = $('.layout-contents__main .c-list-title')
+        list = $('.layout-contents__main .p-category-organization .item, .layout-contents__main .c-list-title')
             .toArray()
-            .map((item) => {
-                item = $(item);
-                const a = item.find('h3 a');
-                const parent = item.parent();
+            .map((element) => {
+                const item = $(element);
+                const a = item.find('h3 a, .title a').first();
+                const container = item.hasClass('item') ? item : item.parent();
+                const link = resolveLink(a.attr('href'), baseUrl);
+                const pubDate = container.find('time').first().attr('datetime');
+
+                if (!link) {
+                    return;
+                }
+
                 return {
-                    title: a.text(),
-                    link: a.attr('href'),
-                    pubDate: timezone(parseDate(parent.find('time').attr('datetime')), +9),
-                    locked: parent.find('.c-list-member-only').length,
-                };
-            });
+                    title: a.text().trim(),
+                    link,
+                    pubDate: pubDate ? parseDate(pubDate) : undefined,
+                    locked: container.find('.c-list-member-only, .icon-locked').length,
+                } satisfies ListItem;
+            })
+            .filter(Boolean) as ListItem[];
     }
 
-    const items = await Promise.all(
+    const items: DataItem[] = await Promise.all(
         list.map((item) =>
-            cache.tryGet(item.link, async () => {
+            cache.tryGet(`yomiuri:detail:${item.link}`, async () => {
                 if (item.locked) {
-                    return item;
+                    return {
+                        title: item.title,
+                        link: item.link,
+                        pubDate: item.pubDate,
+                    };
                 }
 
                 const response = await got(item.link);
                 const $ = load(response.data);
-                const mainContent = $('.p-main-contents');
+                const canonical = $('link[rel="canonical"]').attr('href') || $('meta[property="og:url"]').attr('content');
+                const mainContent = $('.p-main-contents').first().clone();
+                const detailItem: DataItem = {
+                    title: item.title,
+                    link: item.link,
+                    pubDate: item.pubDate,
+                };
 
-                mainContent.find('[class^=ev-article], svg').remove();
+                mainContent.find('script, style, noscript, svg, .p-related-series, .p-related-tags, .p-article-navigation, .c-article-btn, [class^=ev-article], [id^=ad-], .p-ad').remove();
                 mainContent.find('img').each((_, img) => {
-                    img.attribs.src = img.attribs.src.split('?')[0];
+                    const src = img.attribs['data-src'] || img.attribs['data-original'] || img.attribs.src;
+                    if (src) {
+                        img.attribs.src = resolveLink(src, item.link)?.split('?')[0] ?? src.split('?')[0];
+                    }
+                });
+                mainContent.find('a').each((_, a) => {
+                    if (a.attribs.href) {
+                        a.attribs.href = resolveLink(a.attribs.href, item.link) ?? a.attribs.href;
+                    }
                 });
 
-                item.description = mainContent.html();
-                item.pubDate = parseDate($('meta[property="article:published_time"]').attr('content')); // 2023-05-17T22:33:00+09:00
-                item.updated = parseDate($('meta[property="article:modified_time"]').attr('content'));
+                detailItem.link = canonical ?? item.link;
+                detailItem.description = mainContent.html() ?? undefined;
 
-                const tag = $('.p-header-category-breadcrumbs li a').last().text();
-                item.category = tag;
-                item.title = `[${tag}] ${item.title}`;
-                return item;
+                const publishedTime = $('meta[property="article:published_time"]').attr('content');
+                const modifiedTime = $('meta[property="article:modified_time"]').attr('content');
+                if (publishedTime) {
+                    detailItem.pubDate = parseDate(publishedTime);
+                }
+                if (modifiedTime) {
+                    detailItem.updated = parseDate(modifiedTime);
+                }
+
+                const tag = $('.p-header-category-breadcrumbs li a')
+                    .toArray()
+                    .map((element) => $(element).text().trim())
+                    .findLast(Boolean);
+                if (tag) {
+                    detailItem.category = [tag];
+                    detailItem.title = `[${tag}] ${item.title}`;
+                }
+                return detailItem;
             })
         )
     );
 
     return {
-        title: $('head title').text(),
+        title: `Yomiuri Shimbun - ${categoryMap.get(category) ?? $('head title').text().trim()}`,
         link: url,
         image: 'https://www.yomiuri.co.jp/apple-touch-icon.png',
         item: items,
