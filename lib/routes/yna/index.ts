@@ -1,19 +1,91 @@
-import { load } from 'cheerio';
-
 import type { Route } from '@/types';
-import cache from '@/utils/cache';
-import got from '@/utils/got';
-import { parseDate } from '@/utils/parse-date';
-import parser from '@/utils/rss-parser';
-import timezone from '@/utils/timezone';
+
+import { getFeed } from './utils';
+
+const categories = {
+    latest: {
+        name: '최신기사',
+        url: 'https://www.yna.co.kr/news',
+        channel: 'news',
+    },
+    politics: {
+        name: '정치',
+        url: 'https://www.yna.co.kr/politics/index',
+        channel: 'politics',
+    },
+    'north-korea': {
+        name: '북한',
+        url: 'https://www.yna.co.kr/nk/index',
+        channel: 'northkorea',
+    },
+    economy: {
+        name: '경제',
+        url: 'https://www.yna.co.kr/economy/index',
+        channel: 'economy',
+    },
+    markets: {
+        name: '마켓+',
+        url: 'https://www.yna.co.kr/market-plus/index',
+        channel: 'market',
+    },
+    business: {
+        name: '산업',
+        url: 'https://www.yna.co.kr/industry/index',
+        channel: 'industry',
+    },
+    society: {
+        name: '사회',
+        url: 'https://www.yna.co.kr/society/index',
+        channel: 'society',
+    },
+    nationwide: {
+        name: '전국',
+        url: 'https://www.yna.co.kr/local/index',
+        channel: 'local',
+    },
+    world: {
+        name: '세계',
+        url: 'https://www.yna.co.kr/international/index',
+        channel: 'international',
+    },
+    arts: {
+        name: '문화',
+        url: 'https://www.yna.co.kr/culture/index',
+        channel: 'culture',
+    },
+    wellness: {
+        name: '건강',
+        url: 'https://www.yna.co.kr/health/index',
+        channel: 'health',
+    },
+    entertainment: {
+        name: '연예',
+        url: 'https://www.yna.co.kr/entertainment/index',
+        channel: 'entertainment',
+    },
+    sports: {
+        name: '스포츠',
+        url: 'https://www.yna.co.kr/sports/index',
+        channel: 'sports',
+    },
+    opinion: {
+        name: '오피니언',
+        url: 'https://www.yna.co.kr/opinion/index',
+        channel: 'opinion',
+    },
+    people: {
+        name: '사람들',
+        url: 'https://www.yna.co.kr/people/index',
+        channel: 'people',
+    },
+};
 
 export const route: Route = {
-    path: '/:lang?/:channel?',
+    path: ['/', '/latest', '/:category'],
     categories: ['traditional-media'],
-    example: '/yna/en/national',
+    example: '/yna/world',
     parameters: {
-        lang: 'Language, see below, `ko` by default',
-        channel: 'RSS Feed Channel, see below, `news` by default',
+        category: 'Category, see table below. `latest` by default',
     },
     features: {
         requirePuppeteer: false,
@@ -23,70 +95,83 @@ export const route: Route = {
         supportScihub: false,
         requireConfig: false,
     },
-    name: 'News',
-    maintainers: ['quiniapiezoelectricity'],
+    radar: [
+        {
+            source: ['www.yna.co.kr/news'],
+            target: '/',
+        },
+        {
+            source: ['www.yna.co.kr/news'],
+            target: '/latest',
+        },
+        {
+            source: ['www.yna.co.kr/politics/index'],
+            target: '/politics',
+        },
+        {
+            source: ['www.yna.co.kr/nk/index'],
+            target: '/north-korea',
+        },
+        {
+            source: ['www.yna.co.kr/economy/index'],
+            target: '/economy',
+        },
+        {
+            source: ['www.yna.co.kr/market-plus/index'],
+            target: '/markets',
+        },
+        {
+            source: ['www.yna.co.kr/industry/index'],
+            target: '/business',
+        },
+        {
+            source: ['www.yna.co.kr/society/index'],
+            target: '/society',
+        },
+        {
+            source: ['www.yna.co.kr/local/index'],
+            target: '/nationwide',
+        },
+        {
+            source: ['www.yna.co.kr/international/index'],
+            target: '/world',
+        },
+        {
+            source: ['www.yna.co.kr/culture/index'],
+            target: '/arts',
+        },
+        {
+            source: ['www.yna.co.kr/health/index'],
+            target: '/wellness',
+        },
+        {
+            source: ['www.yna.co.kr/entertainment/index'],
+            target: '/entertainment',
+        },
+        {
+            source: ['www.yna.co.kr/sports/index'],
+            target: '/sports',
+        },
+        {
+            source: ['www.yna.co.kr/opinion/index'],
+            target: '/opinion',
+        },
+        {
+            source: ['www.yna.co.kr/people/index'],
+            target: '/people',
+        },
+    ],
+    name: '뉴스',
+    maintainers: ['quiniapiezoelectricity', 'ZHA30'],
     handler,
-    description: `| Language | 한국어 | English | 简体中文 | 日本語 | عربي | Español | Français |
-| -------- | ------ | ------- | -------- | ------ | ---- | ------- | -------- |
-| \`:lang\`  | \`ko\`   | \`en\`    | \`cn\`     | \`jp\`   | \`ar\` | \`es\`    | \`fr\`     |
-
-For a full list of RSS Feed Channels, please refer to the RSS feed page of the corresponding language
-
-| RSS Feed Page                                             |
-| --------------------------------------------------------- |
-| [한국어](https://www.yna.co.kr/rss/index?site=footer_rss) |
-| [English](https://en.yna.co.kr/channel/index)             |
-| [简体中文](https://cn.yna.co.kr/channel/index)            |
-| [日本語](https://jp.yna.co.kr/channel/index)              |
-| [عربي](https://ar.yna.co.kr/channel/index)                |
-| [Español](https://sp.yna.co.kr/channel/index)             |
-| [Français](https://fr.yna.co.kr/channel/index)            |
-
-::: tip
-For example, the path for the RSS feed url <https://www.yna.co.kr/rss/economy.xml> and <https://cn.yna.co.kr/RSS/news.xml> would be \`/ko/economy\` and \`/cn/news\` respectively.
-:::`,
+    url: 'www.yna.co.kr/news',
+    description: `| 最新   | 政治     | 朝鲜        | 经济    | 市场    | 产业     | 社会    | 全国       | 世界  | 文化 | 健康     | 娱乐          | 体育   | 观点    | 人物   |
+| ------ | -------- | ----------- | ------- | ------- | -------- | ------- | ---------- | ----- | ---- | -------- | ------------- | ------ | ------- | ------ |
+| latest | politics | north-korea | economy | markets | business | society | nationwide | world | arts | wellness | entertainment | sports | opinion | people |`,
 };
 
-async function handler(ctx) {
-    const lang = ctx.req.param('lang') ?? 'ko';
-    const channel = ctx.req.param('channel') ?? 'news';
-    let url;
-    switch (lang) {
-        case 'ko':
-            url = `https://www.yna.co.kr/rss/${channel}.xml`;
-            break;
-        default:
-            url = `https://${lang}.yna.co.kr/RSS/${channel}.xml`;
-            break;
-    }
-
-    const feed = await parser.parseURL(url);
-    const items = await Promise.all(
-        feed.items.map((item) =>
-            cache.tryGet(item.link, async () => {
-                item.pubDate = lang === 'ko' ? parseDate(item.pubDate) : timezone(parseDate(item.pubDate), +9); // Timezone is only included in the pubDate of the Korean language RSS
-                const response = await got(item.link);
-                const $ = load(response.data);
-                item.author =
-                    item.creator ??
-                    $('.tit-name')
-                        .toArray()
-                        .map((c) => $(c).text())
-                        .join(', ');
-                const article = $('article.story-news');
-                article.find('.related-group').remove();
-                article.find('.writer-zone01').remove();
-                item.description = article.html();
-                return item;
-            })
-        )
-    );
-
-    return {
-        title: feed.title,
-        link: feed.link,
-        description: feed.description,
-        language: feed.language ?? lang,
-        item: items,
-    };
+export function handler(ctx) {
+    const category = ctx.req.param('category') ?? 'latest';
+    const target = categories[category] ?? categories.latest;
+    return getFeed(target.channel, target.url);
 }
