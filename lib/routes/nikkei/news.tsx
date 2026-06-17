@@ -2,93 +2,76 @@ import { load } from 'cheerio';
 import { raw } from 'hono/html';
 import { renderToString } from 'hono/jsx/dom/server';
 
-import type { Route } from '@/types';
+import type { Data, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
 
+type NikkeiNewsItem = {
+    title: string;
+    link: string;
+    image?: string;
+    category: string[];
+    paywall: boolean;
+    pubDate?: string;
+    description?: string;
+};
+
 export const route: Route = {
-    path: '/news/:category/:article_type?',
+    path: ['/news', '/news/:category/:article_type?'],
     categories: ['traditional-media'],
-    example: '/nikkei/news/news',
+    example: '/nikkei/news',
     parameters: { category: 'Category, see table below', article_type: 'Only includes free articles, set `free` to enable, disabled by default' },
     radar: [
         {
+            source: ['www.nikkei.com/news/category'],
+            target: '/news',
+        },
+        {
             source: ['www.nikkei.com/:category/archive', 'www.nikkei.com/:category'],
-            target: '/:category',
+            target: '/news/:category',
         },
     ],
     name: 'News',
-    maintainers: ['Arracc', 'ladeng07'],
+    maintainers: ['Arracc', 'ladeng07', 'ZHA30'],
     handler,
     description: `| 総合 | オピニオン | 経済    | 政治     | 金融      | マーケット | ビジネス | マネーのまなび | テック     | 国際          | スポーツ | 社会・調査 | 地域  | 文化    | ライフスタイル |
 | ---- | ---------- | ------- | -------- | --------- | ---------- | -------- | -------------- | ---------- | ------------- | -------- | ---------- | ----- | ------- | -------------- |
 | news | opinion    | economy | politics | financial | business   | 不支持   | 不支持         | technology | international | sports   | society    | local | culture | lifestyle      |`,
 };
 
-async function handler(ctx) {
+async function handler(ctx): Promise<Data> {
     const baseUrl = 'https://www.nikkei.com';
-    const { category, article_type = 'paid' } = ctx.req.param();
+    const { category = 'news', article_type = 'paid' } = ctx.req.param();
     const url = category === 'news' ? `${baseUrl}/news/category/` : `${baseUrl}/${category}/archive/`;
 
     const response = await got(url);
-    const data = response.data;
-    const $ = load(data);
+    const $ = load(response.data);
 
-    let categoryName: string;
-    const listSelector = $('[class^="container_"]  [class^="default_"]:has(article)');
-    const paidSelector = 'img[class^="icon_"]';
+    const categoryName =
+        $('h1')
+            .first()
+            .text()
+            .trim()
+            .replaceAll(/^「|」$/g, '') || (category === 'news' ? '速報' : category);
 
-    let list = listSelector.toArray().map((item) => {
-        item = $(item);
-        item.find('p a').remove();
-        return {
-            title: item.find('[class^="titleLink_"]').text(),
-            link: `${baseUrl}${item.find('[class^="title_"] a').attr('href')}`,
-            image: item.find('[class^="image_"] img').removeAttr('style').removeAttr('width').removeAttr('height').parent().html(),
-            category: item
-                .find('[class^="topicItem_"] a')
-                .toArray()
-                .map((item) => $(item).text()),
-            paywall: !!item.find(paidSelector).length,
-        };
-    });
-
-    if (category === 'news') {
-        categoryName = '総合';
-        list = [
-            ...list,
-            ...$('div#CONTENTS_MAIN .m-miM32_itemTitle')
-                .toArray()
-                .map((item) => {
-                    item = $(item);
-                    const a = item.find('a').first();
-                    return {
-                        title: a.text(),
-                        link: `${baseUrl}${a.attr('href')}`,
-                        category: item
-                            .find('.m-miM32_itemkeyword a')
-                            .toArray()
-                            .map((item) => $(item).text()),
-                        paywall: !!item.find(paidSelector).length,
-                    };
-                }),
-        ];
-    } else {
-        categoryName = $('h1.l-miH11_title').text().trim();
-    }
+    const list: NikkeiNewsItem[] = $('main article')
+        .toArray()
+        .map((item) => extractItem($, item, baseUrl))
+        .filter((item): item is NikkeiNewsItem => !!item && !!item.link && !!item.title);
 
     const items = await Promise.all(
         list.map((item) =>
             cache.tryGet(item.link, async () => {
-                const { data: response } = await got(item.link);
-                const $ = load(response);
+                const { data: detailResponse } = await got(item.link);
+                const $ = load(detailResponse);
 
-                $('.notFloated_n1oadkwi').remove();
+                $('.notFloated_n1oadkwi, script, style, noscript').remove();
 
-                item.pubDate = parseDate($('meta[property="article:published_time"]').attr('content'));
-                const description = $('section[class^=container_]').html();
-                item.description = renderToString(
+                const publishedTime = $('meta[property="article:published_time"]').attr('content');
+                const articleBody = $('section[data-track-article-content]').first().html() ?? $('main article section').first().html() ?? $('main').find('article').first().html() ?? $('main').find('section').first().html() ?? '';
+
+                const description = renderToString(
                     <>
                         {item.paywall && item.image ? (
                             <>
@@ -96,14 +79,20 @@ async function handler(ctx) {
                                 <br />
                             </>
                         ) : null}
-                        {description ? raw(description) : null}
+                        {articleBody ? raw(articleBody) : $('meta[name="description"]').attr('content')}
                     </>
                 );
 
-                return item;
+                return {
+                    ...item,
+                    pubDate: publishedTime ? parseDate(publishedTime) : undefined,
+                    description,
+                };
             })
         )
     );
+
+    const feedItems = (article_type === 'free' ? items.filter((item) => !item.paywall) : items).map(({ paywall: _paywall, ...item }) => item);
 
     return {
         title: '日本経済新聞 - ' + categoryName,
@@ -111,6 +100,39 @@ async function handler(ctx) {
         link: url,
         image: $('meta[property="og:image"]').attr('content'),
         language: 'ja',
-        item: article_type === 'free' ? items.filter((item) => !item.paywall) : items,
+        item: feedItems,
+    };
+}
+
+function extractItem($, element, baseUrl): NikkeiNewsItem | null {
+    const article = $(element);
+    const articleLink = article.find('h1 a[href^="/article/"], h2 a[href^="/article/"], h3 a[href^="/article/"], a[href^="/article/"]').first();
+    const href = articleLink.attr('href');
+
+    if (!href) {
+        return null;
+    }
+
+    const title = articleLink.text().trim() || article.find('h1, h2, h3').first().text().trim() || article.find('a[href^="/article/"]').first().text().trim();
+
+    const image = article.find('img[src*="article-image-ix"], img[src*="imgix-proxy"], img[src^="https://article-image-ix.nikkei.com"]').first().removeAttr('style').removeAttr('width').removeAttr('height');
+
+    const categories = article
+        .find('a')
+        .toArray()
+        .map((item) => $(item))
+        .filter((item) => {
+            const href = item.attr('href');
+            return href && href !== articleLink.attr('href') && !href.startsWith('/article/');
+        })
+        .map((item) => item.text().trim())
+        .filter(Boolean);
+
+    return {
+        title,
+        link: new URL(href, baseUrl).href,
+        image: image.length ? $.html(image) : undefined,
+        category: [...new Set(categories)],
+        paywall: article.text().includes('会員限定記事') || article.find('img[alt*="会員限定"], img[src*="locked_square"], img[src*="lock"]').length > 0,
     };
 }
