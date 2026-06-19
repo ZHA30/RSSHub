@@ -342,8 +342,12 @@ jobs:
 
                   const ensureNamedImport = (sourceFile, moduleName, importName) => {
                     let foundModule = false;
+                    let lastImportIndex = -1;
 
-                    const statements = sourceFile.statements.map((statement) => {
+                    const statements = sourceFile.statements.map((statement, index) => {
+                      if (ts.isImportDeclaration(statement)) {
+                        lastImportIndex = index;
+                      }
                       if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== moduleName) {
                         return statement;
                       }
@@ -373,7 +377,21 @@ jobs:
                     });
 
                     if (!foundModule) {
-                      fail(`Missing import from ${moduleName}`);
+                      const importDeclaration = ts.factory.createImportDeclaration(
+                        undefined,
+                        ts.factory.createImportClause(
+                          false,
+                          undefined,
+                          ts.factory.createNamedImports([ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(importName))])
+                        ),
+                        ts.factory.createStringLiteral(moduleName)
+                      );
+                      const insertionIndex = lastImportIndex + 1;
+                      return ts.factory.updateSourceFile(sourceFile, [
+                        ...statements.slice(0, insertionIndex),
+                        importDeclaration,
+                        ...statements.slice(insertionIndex),
+                      ]);
                     }
 
                     return ts.factory.updateSourceFile(sourceFile, statements);
@@ -384,21 +402,15 @@ jobs:
                     sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
                     let localePathPatched = false;
 
-                    const statements = sourceFile.statements.map((statement) => {
-                      if (
-                        ts.isVariableStatement(statement) &&
-                        statement.declarationList.declarations.some((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'localePath')
-                      ) {
-                        const updatedDeclarations = statement.declarationList.declarations.map((declaration) => {
-                          if (!ts.isIdentifier(declaration.name) || declaration.name.text !== 'localePath') {
-                            return declaration;
-                          }
+                    const transformer = (context) => {
+                      const visit = (node) => {
+                        if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'localePath') {
                           localePathPatched = true;
                           return ts.factory.updateVariableDeclaration(
-                            declaration,
-                            declaration.name,
-                            declaration.exclamationToken,
-                            declaration.type,
+                            node,
+                            node.name,
+                            node.exclamationToken,
+                            node.type,
                             ts.factory.createCallExpression(ts.factory.createIdentifier('computed'), undefined, [
                               ts.factory.createArrowFunction(
                                 undefined,
@@ -429,19 +441,16 @@ jobs:
                               ),
                             ])
                           );
-                        });
+                        }
 
-                        return ts.factory.updateVariableStatement(
-                          statement,
-                          statement.modifiers,
-                          ts.factory.updateVariableDeclarationList(statement.declarationList, updatedDeclarations)
-                        );
-                      }
+                        return ts.visitEachChild(node, visit, context);
+                      };
 
-                      return statement;
-                    });
+                      return (node) => ts.visitNode(node, visit);
+                    };
 
-                    const printed = printSourceFile(ts.factory.updateSourceFile(sourceFile, statements));
+                    const transformed = ts.transform(sourceFile, [transformer]).transformed[0];
+                    const printed = printSourceFile(transformed);
                     if (!localePathPatched) {
                       fail('Unable to patch localePath in useLocale.ts');
                     }
@@ -566,11 +575,93 @@ jobs:
                     return printed;
                   };
 
-                  const patchRouteScript = (script) => {
-                    let sourceFile = parseSourceFile('Route.vue.ts', script);
+                  const patchMarkdownComposable = (content) => {
+                    let sourceFile = parseSourceFile('.vitepress/theme/composables/markdown.ts', content);
                     sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
-                    const printed = printSourceFile(sourceFile);
-                    expectMatch(printed, /import\s*\{\s*withBase\s*\}\s*from\s*['"]vitepress['"];/, 'Failed to add withBase import to Route.vue');
+                    let renderMarkdownPatched = false;
+
+                    const helperStatement = parseSourceFile(
+                      'markdown-helper.ts',
+                      "const rewriteMarkdownAssetUrls = (html: string) => html.replace(/(href|src)=\\\"\\\\/(?!\\\\/)/g, (_, attr) => `${attr}=\\\"${withBase('/')}`).replace(/(href|src)='\\\\/(?!\\\\/)/g, (_, attr) => `${attr}='${withBase('/')}`);"
+                    ).statements[0];
+
+                    const transformer = (context) => {
+                      const visit = (node) => {
+                        if (
+                          ts.isVariableDeclaration(node) &&
+                          ts.isIdentifier(node.name) &&
+                          node.name.text === 'renderMarkdown' &&
+                          node.initializer &&
+                          ts.isArrowFunction(node.initializer)
+                        ) {
+                          renderMarkdownPatched = true;
+                          return ts.factory.updateVariableDeclaration(
+                            node,
+                            node.name,
+                            node.exclamationToken,
+                            node.type,
+                            ts.factory.createArrowFunction(
+                              node.initializer.modifiers,
+                              node.initializer.typeParameters,
+                              node.initializer.parameters,
+                              node.initializer.type,
+                              node.initializer.equalsGreaterThanToken,
+                              ts.factory.createCallExpression(ts.factory.createIdentifier('rewriteMarkdownAssetUrls'), undefined, [
+                                ts.factory.createConditionalExpression(
+                                  ts.factory.createIdentifier('inline'),
+                                  ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                                  ts.factory.createCallExpression(
+                                    ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('md'), 'renderInline'),
+                                    undefined,
+                                    [ts.factory.createIdentifier('content'), ts.factory.createObjectLiteralExpression([ts.factory.createShorthandPropertyAssignment('t')])]
+                                  ),
+                                  ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                                  ts.factory.createCallExpression(
+                                    ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('md'), 'render'),
+                                    undefined,
+                                    [ts.factory.createIdentifier('content'), ts.factory.createObjectLiteralExpression([ts.factory.createShorthandPropertyAssignment('t')])]
+                                  )
+                                ),
+                              ])
+                            )
+                          );
+                        }
+
+                        return ts.visitEachChild(node, visit, context);
+                      };
+
+                      return (node) => ts.visitNode(node, visit);
+                    };
+
+                    const transformed = ts.transform(sourceFile, [transformer]).transformed[0];
+                    const statements = [...transformed.statements];
+                    const hasHelper = statements.some(
+                      (statement) =>
+                        ts.isVariableStatement(statement) &&
+                        statement.declarationList.declarations.some(
+                          (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'rewriteMarkdownAssetUrls'
+                        )
+                    );
+                    const renderMarkdownIndex = statements.findIndex(
+                      (statement) =>
+                        ts.isVariableStatement(statement) &&
+                        statement.declarationList.declarations.some(
+                          (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'renderMarkdown'
+                        )
+                    );
+                    if (renderMarkdownIndex === -1) {
+                      fail('Unable to locate renderMarkdown export in markdown.ts');
+                    }
+                    if (!hasHelper) {
+                      statements.splice(renderMarkdownIndex, 0, helperStatement);
+                    }
+                    const printed = printSourceFile(ts.factory.updateSourceFile(transformed, statements));
+                    if (!renderMarkdownPatched) {
+                      fail('Unable to patch renderMarkdown in markdown.ts');
+                    }
+                    expectMatch(printed, /import\s*\{\s*withBase\s*\}\s*from\s*['"]vitepress['"];/, 'Failed to add withBase import to markdown.ts');
+                    expectMatch(printed, /const\s+rewriteMarkdownAssetUrls\s*=\s*\(html:\s*string\)/, 'Failed to inject markdown asset rewrite helper');
+                    expectMatch(printed, /rewriteMarkdownAssetUrls\(/, 'Failed to wrap renderMarkdown output');
                     return printed;
                   };
 
@@ -589,43 +680,16 @@ jobs:
                   };
 
                   const patchNamespaceDetail = (content) => {
-                    let updated = replaceScriptSetup(content, 'NamespaceDetail.vue', patchNamespaceDetailScript);
-                    updated = ensureMarkdownRewrite(
-                      updated,
-                      'NamespaceDetail.vue',
-                      "function handleImageError(e: Event) {\n  const img = e.target as HTMLImageElement;\n  img.src = withBase('/logo.png');\n}\n",
-                      "function handleImageError(e: Event) {\n  const img = e.target as HTMLImageElement;\n  img.src = withBase('/logo.png');\n}\n\nconst rewriteMarkdownAssetUrls = (html: string) =>\n  html\n    .replace(/(href|src)=\"\\/(?!\\/)/g, (_, attr) => `${attr}=\"${withBase('/')}`)\n    .replace(/(href|src)='\\/(?!\\/)/g, (_, attr) => `${attr}='${withBase('/')}`);\n",
-                      'const rewriteMarkdownAssetUrls = (html: string) =>'
-                    );
-                    updated = ensureMarkdownRewrite(
-                      updated,
-                      'NamespaceDetail.vue',
-                      "function renderMarkdown(content: string) {\n  return md.render(content);\n}\n",
-                      "function renderMarkdown(content: string) {\n  return rewriteMarkdownAssetUrls(md.render(content));\n}\n",
-                      'return rewriteMarkdownAssetUrls(md.render(content));'
-                    );
-                    return updated;
-                  };
-
-                  const patchRouteVue = (content) => {
-                    let updated = replaceScriptSetup(content, 'Route.vue', patchRouteScript);
-                    updated = ensureMarkdownRewrite(
-                      updated,
-                      'Route.vue',
-                      "const renderMarkdown = (item, inline = true) => {\n  const md = new MarkdownIt({\n    html: true,\n  });\n  return inline ? md.renderInline(item) : md.render(item);\n};\n",
-                      "const rewriteMarkdownAssetUrls = (html: string) =>\n  html\n    .replace(/(href|src)=\"\\/(?!\\/)/g, (_, attr) => `${attr}=\"${withBase('/')}`)\n    .replace(/(href|src)='\\/(?!\\/)/g, (_, attr) => `${attr}='${withBase('/')}`);\n\nconst renderMarkdown = (item, inline = true) => {\n  const md = new MarkdownIt({\n    html: true,\n  });\n  const rendered = inline ? md.renderInline(item) : md.render(item);\n  return rewriteMarkdownAssetUrls(rendered);\n};\n",
-                      'const rewriteMarkdownAssetUrls = (html: string) =>'
-                    );
-                    return updated;
+                    return replaceScriptSetup(content, 'NamespaceDetail.vue', patchNamespaceDetailScript);
                   };
 
                   const patchNamespaceList = (content) => replaceScriptSetup(content, 'NamespaceList.vue', patchNamespaceListScript);
 
                   writeFile('.vitepress/config/shared.ts', transformSharedConfig(readFile('.vitepress/config/shared.ts').content));
                   writeFile('.vitepress/theme/composables/useLocale.ts', patchUseLocale(readFile('.vitepress/theme/composables/useLocale.ts').content));
+                  writeFile('.vitepress/theme/composables/markdown.ts', patchMarkdownComposable(readFile('.vitepress/theme/composables/markdown.ts').content));
                   writeFile('.vitepress/theme/components/NamespaceList.vue', patchNamespaceList(readFile('.vitepress/theme/components/NamespaceList.vue').content));
                   writeFile('.vitepress/theme/components/NamespaceDetail.vue', patchNamespaceDetail(readFile('.vitepress/theme/components/NamespaceDetail.vue').content));
-                  writeFile('.vitepress/theme/components/Route.vue', patchRouteVue(readFile('.vitepress/theme/components/Route.vue').content));
 
                   console.log(`Patched docs site for base ${process.env.DOCS_BASE || '/'} at ${docsRoot}`);
                   EOF
