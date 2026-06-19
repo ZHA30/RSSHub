@@ -609,7 +609,7 @@ jobs:
                                       ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('html'), 'replace'),
                                       undefined,
                                       [
-                                        ts.factory.createRegularExpressionLiteral('/(href|src)="\\\\/(?!\\\\/)/g'),
+                                        ts.factory.createRegularExpressionLiteral('/(href|src)="\\/(?!\\/)/g'),
                                         ts.factory.createArrowFunction(
                                           undefined,
                                           undefined,
@@ -635,7 +635,7 @@ jobs:
                                   ),
                                   undefined,
                                   [
-                                    ts.factory.createRegularExpressionLiteral("/(href|src)='\\\\/(?!\\\\/)/g"),
+                                    ts.factory.createRegularExpressionLiteral("/(href|src)='\\/(?!\\/)/g"),
                                     ts.factory.createArrowFunction(
                                       undefined,
                                       undefined,
