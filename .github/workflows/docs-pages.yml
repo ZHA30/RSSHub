@@ -580,10 +580,89 @@ jobs:
                     sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
                     let renderMarkdownPatched = false;
 
-                    const helperStatement = parseSourceFile(
-                      'markdown-helper.ts',
-                      "const rewriteMarkdownAssetUrls = (html: string) => html.replace(/(href|src)=\\\"\\\\/(?!\\\\/)/g, (_, attr) => `${attr}=\\\"${withBase('/')}`).replace(/(href|src)='\\\\/(?!\\\\/)/g, (_, attr) => `${attr}='${withBase('/')}`);"
-                    ).statements[0];
+                    const createRewriteHelperStatement = () =>
+                      ts.factory.createVariableStatement(
+                        undefined,
+                        ts.factory.createVariableDeclarationList(
+                          [
+                            ts.factory.createVariableDeclaration(
+                              ts.factory.createIdentifier('rewriteMarkdownAssetUrls'),
+                              undefined,
+                              undefined,
+                              ts.factory.createArrowFunction(
+                                undefined,
+                                undefined,
+                                [
+                                  ts.factory.createParameterDeclaration(
+                                    undefined,
+                                    undefined,
+                                    ts.factory.createIdentifier('html'),
+                                    undefined,
+                                    ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword)
+                                  ),
+                                ],
+                                undefined,
+                                ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                                ts.factory.createCallExpression(
+                                  ts.factory.createPropertyAccessExpression(
+                                    ts.factory.createCallExpression(
+                                      ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('html'), 'replace'),
+                                      undefined,
+                                      [
+                                        ts.factory.createRegularExpressionLiteral('/(href|src)="\\\\/(?!\\\\/)/g'),
+                                        ts.factory.createArrowFunction(
+                                          undefined,
+                                          undefined,
+                                          [
+                                            ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('_')),
+                                            ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('attr')),
+                                          ],
+                                          undefined,
+                                          ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                                          ts.factory.createBinaryExpression(
+                                            ts.factory.createBinaryExpression(
+                                              ts.factory.createIdentifier('attr'),
+                                              ts.SyntaxKind.PlusToken,
+                                              ts.factory.createStringLiteral('="')
+                                            ),
+                                            ts.SyntaxKind.PlusToken,
+                                            ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [ts.factory.createStringLiteral('/')])
+                                          )
+                                        ),
+                                      ]
+                                    ),
+                                    'replace'
+                                  ),
+                                  undefined,
+                                  [
+                                    ts.factory.createRegularExpressionLiteral("/(href|src)='\\\\/(?!\\\\/)/g"),
+                                    ts.factory.createArrowFunction(
+                                      undefined,
+                                      undefined,
+                                      [
+                                        ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('_')),
+                                        ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('attr')),
+                                      ],
+                                      undefined,
+                                      ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                                      ts.factory.createBinaryExpression(
+                                        ts.factory.createBinaryExpression(
+                                          ts.factory.createIdentifier('attr'),
+                                          ts.SyntaxKind.PlusToken,
+                                          ts.factory.createStringLiteral("='")
+                                        ),
+                                        ts.SyntaxKind.PlusToken,
+                                        ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [ts.factory.createStringLiteral('/')])
+                                      )
+                                    ),
+                                  ]
+                                )
+                              )
+                            ),
+                          ],
+                          ts.NodeFlags.Const
+                        )
+                      );
 
                     const transformer = (context) => {
                       const visit = (node) => {
@@ -653,7 +732,7 @@ jobs:
                       fail('Unable to locate renderMarkdown export in markdown.ts');
                     }
                     if (!hasHelper) {
-                      statements.splice(renderMarkdownIndex, 0, helperStatement);
+                      statements.splice(renderMarkdownIndex, 0, createRewriteHelperStatement());
                     }
                     const printed = printSourceFile(ts.factory.updateSourceFile(transformed, statements));
                     if (!renderMarkdownPatched) {
