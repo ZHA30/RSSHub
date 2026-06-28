@@ -80,7 +80,8 @@ const cleanDescription = (html: string) => {
         const img = $(element);
         const src = img.attr('src') || img.attr('data-src') || img.attr('data-croporisrc');
         img.attr('src', src ?? '');
-        for (const name of Object.keys(element.attribs ?? {})) {
+        const attributeNames = Object.keys(element.attribs ?? {});
+        for (const name of attributeNames) {
             if (name !== 'src' && name !== 'alt') {
                 img.removeAttr(name);
             }
@@ -89,7 +90,8 @@ const cleanDescription = (html: string) => {
 
     $('a').each((_, element) => {
         const link = $(element);
-        for (const name of Object.keys(element.attribs ?? {})) {
+        const attributeNames = Object.keys(element.attribs ?? {});
+        for (const name of attributeNames) {
             if (name !== 'href') {
                 link.removeAttr(name);
             }
@@ -141,11 +143,11 @@ const cleanDescription = (html: string) => {
     });
 };
 
-async function getRssItem(item: LifeweekListItem, articleLink: string): Promise<DataItem> {
+export async function getRssItem(item: LifeweekListItem, articleLink: string): Promise<DataItem> {
     const articleApiLink = `${articleApiRootUrl}/${item.id}`;
     const { data } = await got(articleApiLink);
     const detail = data.model;
-    const time = item.pubTime ? timezone(parseDate(item.pubTime), +8) : undefined;
+    const time = item.pubTime ? timezone(parseDate(item.pubTime), 8) : undefined;
     const category = [...new Set([...(item.articleTags?.map((tag) => tag.name).filter((name): name is string => !!name) ?? []), ...(item.tag?.split('、').filter(Boolean) ?? [])])];
     const author = [
         ...new Set([detail.aritcleAuthors, ...(detail.teacherList?.map((teacher) => teacher.name).filter(Boolean) ?? []), ...(item.teacherList?.map((teacher) => teacher.name).filter(Boolean) ?? [])].filter(Boolean)),

@@ -5,7 +5,7 @@ import cache from '@/utils/cache';
 import { default as ofetch } from '@/utils/ofetch';
 import { parseDate, parseRelativeDate } from '@/utils/parse-date';
 
-const fetchWithCookie = <T = any>(url: string, options?: Record<string, any>): Promise<T> =>
+const fetchWithCookie = <T = any,>(url: string, options?: Record<string, any>): Promise<T> =>
     ofetch<T>(url, {
         ...options,
         headers: {
@@ -48,7 +48,7 @@ export default {
             let description = contentDetail.content || contentDetail.summary || contentDetail.desc || '';
 
             if (contentDetail.videos) {
-                description = description + contentDetail.summary;
+                description += contentDetail.summary;
             }
             if (useOldMode) {
                 if (contentDetail.videos) {
