@@ -15,6 +15,12 @@ const rootUrl = 'https://www.biketo.com';
 const apiUrl = new URL('/app.php', rootUrl).href;
 
 const categoryMap = {
+    latest: {
+        title: '最新资讯',
+        path: '/more.html',
+        type: 'latest',
+        id: '',
+    },
     news: {
         title: '骑闻',
         path: '/news/',
@@ -276,13 +282,13 @@ type ApiResponse = {
 };
 
 const categories = Object.keys(categoryMap) as Category[];
-const routeDescription = `| 栏目 | 路由 |
+const routeDescription = `| 订阅项 | 路由 |
 | --- | --- |
 ${categories.map((category) => `| [${categoryMap[category].title}](${getPageUrl(categoryMap[category])}) | [/biketo/${category}](https://rsshub.app/biketo/${category}) |`).join('\n')}`;
 
 const getCategory = (category?: string): Category => {
     if (!category || !Object.hasOwn(categoryMap, category)) {
-        throw new InvalidParameterError(`不支持的栏目：${category || '空'}。可用栏目为 ${categories.join('、')}。`);
+        throw new InvalidParameterError(`不支持的订阅项：${category || '空'}。可用订阅项为 ${categories.join('、')}。`);
     }
 
     return category as Category;
@@ -300,6 +306,21 @@ const getRequestHeaders = (referer: string) => ({
     'biketo-version': '1.0',
     'biketo-channel': 'web',
 });
+
+const getListSearchParams = (category: CategoryConfig) =>
+    category.type === 'latest'
+        ? {
+              m: 'info',
+              a: 'more',
+              page: '1',
+          }
+        : {
+              m: 'info',
+              a: 'getNewsList',
+              type: category.type,
+              id: category.id,
+              page: '1',
+          };
 
 const fetchGb2312Page = async (url: string, referer = rootUrl) => {
     const { data } = await got(url, {
@@ -320,7 +341,7 @@ const getDetailFetchUrl = (link: string) => {
 
 const normalizeText = (text?: string) => text?.replaceAll(/\s+/g, ' ').trim() ?? '';
 
-const parsePubDate = (dateText?: string) => (dateText ? timezone(parseDate(dateText, dateText.includes(':') ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD'), +8) : undefined);
+const parsePubDate = (dateText?: string) => (dateText ? timezone(parseDate(dateText, dateText.includes(':') ? 'YYYY-MM-DD HH:mm:ss' : 'YYYY-MM-DD'), 8) : undefined);
 
 const normalizeContentLinks = ($: CheerioAPI, content) => {
     content.find('img').each((_, element) => {
@@ -379,7 +400,7 @@ const cleanContent = ($: CheerioAPI) => {
 const parseDetailTitle = ($: CheerioAPI, fallback: string) => {
     const title = normalizeText($('.article-title').first().text());
 
-    return title || normalizeText($('title').text().split(' - ')[0]) || fallback;
+    return title || normalizeText($('title').text().split(' - ', 1)[0]) || fallback;
 };
 
 const parseDetailAuthor = ($: CheerioAPI, fallback?: string) =>
@@ -458,13 +479,7 @@ const handler = async (ctx: Context): Promise<Data> => {
     const categoryConfig = categoryMap[category];
     const pageUrl = getPageUrl(categoryConfig);
     const { data } = await got(apiUrl, {
-        searchParams: {
-            m: 'info',
-            a: 'getNewsList',
-            type: categoryConfig.type,
-            id: categoryConfig.id,
-            page: '1',
-        },
+        searchParams: getListSearchParams(categoryConfig),
         headers: getRequestHeaders(pageUrl),
     });
     const response = data as ApiResponse;
@@ -489,14 +504,14 @@ const handler = async (ctx: Context): Promise<Data> => {
 
 export const route: Route = {
     path: '/:category',
-    name: '栏目',
+    name: '资讯列表',
     url: 'www.biketo.com',
     maintainers: ['ZHA30'],
     handler,
-    example: '/biketo/news',
+    example: '/biketo/latest',
     parameters: {
         category: {
-            description: '栏目',
+            description: '订阅项',
             options: categories.map((category) => ({
                 label: categoryMap[category].title,
                 value: category,
