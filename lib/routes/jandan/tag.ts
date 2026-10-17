@@ -23,7 +23,7 @@ export const route: Route = {
     radar: [
         {
             source: ['jandan.net/p/tag/:tag'],
-            target: '/jandan/tag/:tag',
+            target: '/tag/:tag',
         },
     ],
     handler,
