@@ -1,9 +1,8 @@
 import pMap from 'p-map';
 
 import type { Route } from '@/types';
-import ofetch from '@/utils/ofetch';
 
-import utils from './utils';
+import utils, { fetchWithCookie } from './utils';
 
 export const route: Route = {
     path: '/gov/:pphId',
@@ -28,7 +27,7 @@ async function handler(ctx) {
     const requestedLimit = Number(ctx.req.query('limit'));
     const pageSize = Number.isFinite(requestedLimit) && requestedLimit >= 1 ? Math.floor(requestedLimit) : 10;
 
-    const response = await ofetch('https://api.thepaper.cn/contentapi/cont/pph/gov', {
+    const response = await fetchWithCookie('https://api.thepaper.cn/contentapi/cont/pph/gov', {
         method: 'POST',
         body: {
             pageNum: 1,
