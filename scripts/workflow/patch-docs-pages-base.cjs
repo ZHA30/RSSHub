@@ -1,0 +1,715 @@
+const fs = require('node:fs');
+const path = require('node:path');
+const ts = require('typescript');
+
+const docsRoot = path.join(process.cwd(), 'rsshub-docs');
+
+const fail = (message) => {
+  throw new Error(message);
+};
+
+const expectMatch = (content, pattern, message) => {
+  if (!pattern.test(content)) {
+    fail(message);
+  }
+};
+
+const readFile = (relativePath) => {
+  const filePath = path.join(docsRoot, relativePath);
+  if (!fs.existsSync(filePath)) {
+    fail(`Missing expected file: ${relativePath}`);
+  }
+  return {
+    filePath,
+    content: fs.readFileSync(filePath, 'utf8'),
+  };
+};
+
+const writeFile = (relativePath, content) => {
+  fs.writeFileSync(path.join(docsRoot, relativePath), content);
+};
+
+const parseSourceFile = (relativePath, content, scriptKind = ts.ScriptKind.TS) =>
+  ts.createSourceFile(relativePath, content, ts.ScriptTarget.Latest, true, scriptKind);
+
+const printSourceFile = (sourceFile) =>
+  ts.createPrinter({
+    newLine: ts.NewLineKind.LineFeed,
+  }).printFile(sourceFile);
+
+const createDocsBaseStatement = () =>
+  ts.factory.createVariableStatement(
+    undefined,
+    ts.factory.createVariableDeclarationList(
+      [
+        ts.factory.createVariableDeclaration(
+          'docsBase',
+          undefined,
+          undefined,
+          ts.factory.createBinaryExpression(
+            ts.factory.createPropertyAccessExpression(
+              ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('process'), 'env'),
+              'DOCS_BASE'
+            ),
+            ts.SyntaxKind.BarBarToken,
+            ts.factory.createStringLiteral('/')
+          )
+        ),
+      ],
+      ts.NodeFlags.Const
+    )
+  );
+
+const transformSharedConfig = (content) => {
+  const sourceFile = parseSourceFile('.vitepress/config/shared.ts', content);
+  let hasDocsBase = false;
+  let defineConfigPatched = false;
+  let faviconPatched = false;
+
+  const updatedStatements = sourceFile.statements.map((statement) => {
+    if (
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.some((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'docsBase')
+    ) {
+      hasDocsBase = true;
+    }
+
+    if (
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.some((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'shared')
+    ) {
+      const declaration = statement.declarationList.declarations.find(
+        (item) =>
+          ts.isIdentifier(item.name) &&
+          item.name.text === 'shared' &&
+          item.initializer &&
+          ts.isCallExpression(item.initializer) &&
+          ts.isIdentifier(item.initializer.expression) &&
+          item.initializer.expression.text === 'defineConfig' &&
+          item.initializer.arguments.length > 0 &&
+          ts.isObjectLiteralExpression(item.initializer.arguments[0])
+      );
+
+      if (!declaration) {
+        return statement;
+      }
+
+      const configObject = declaration.initializer.arguments[0];
+      const baseProperty = configObject.properties.find(
+        (property) =>
+          ts.isPropertyAssignment(property) &&
+          ts.isIdentifier(property.name) &&
+          property.name.text === 'base'
+      );
+
+      const patchedProperties = baseProperty
+        ? ts.factory.createNodeArray(
+            configObject.properties.map((property) =>
+              property === baseProperty
+                ? ts.factory.updatePropertyAssignment(property, property.name, ts.factory.createIdentifier('docsBase'))
+                : property
+            )
+          )
+        : ts.factory.createNodeArray([
+            ts.factory.createPropertyAssignment('base', ts.factory.createIdentifier('docsBase')),
+            ...configObject.properties,
+          ]);
+
+      const rewrittenProperties = patchedProperties.map((property) => {
+        if (
+          ts.isPropertyAssignment(property) &&
+          ts.isIdentifier(property.name) &&
+          property.name.text === 'head' &&
+          ts.isArrayLiteralExpression(property.initializer)
+        ) {
+          const headElements = property.initializer.elements.map((element) => {
+            if (
+              !ts.isArrayLiteralExpression(element) ||
+              element.elements.length < 2 ||
+              !ts.isObjectLiteralExpression(element.elements[1])
+            ) {
+              return element;
+            }
+
+            const tagName = element.elements[0];
+            if (!ts.isStringLiteral(tagName) || tagName.text !== 'link') {
+              return element;
+            }
+
+            const attrs = element.elements[1];
+            let isShortcutIcon = false;
+            const rewrittenAttrs = attrs.properties.map((attr) => {
+              if (
+                !ts.isPropertyAssignment(attr) ||
+                !ts.isIdentifier(attr.name) ||
+                !ts.isStringLiteral(attr.initializer)
+              ) {
+                return attr;
+              }
+
+              if (attr.name.text === 'rel' && attr.initializer.text === 'shortcut icon') {
+                isShortcutIcon = true;
+                return attr;
+              }
+
+              if (attr.name.text === 'href' && attr.initializer.text === '/favicon.ico') {
+                faviconPatched = true;
+                return ts.factory.updatePropertyAssignment(
+                  attr,
+                  attr.name,
+                  ts.factory.createTemplateExpression(ts.factory.createTemplateHead(''), [
+                    ts.factory.createTemplateSpan(
+                      ts.factory.createIdentifier('docsBase'),
+                      ts.factory.createTemplateTail('favicon.ico')
+                    ),
+                  ])
+                );
+              }
+
+              return attr;
+            });
+
+            if (!isShortcutIcon) {
+              return element;
+            }
+
+            return ts.factory.updateArrayLiteralExpression(element, [
+              tagName,
+              ts.factory.updateObjectLiteralExpression(attrs, rewrittenAttrs),
+              ...element.elements.slice(2),
+            ]);
+          });
+
+          return ts.factory.updatePropertyAssignment(
+            property,
+            property.name,
+            ts.factory.updateArrayLiteralExpression(property.initializer, headElements)
+          );
+        }
+
+        return property;
+      });
+
+      defineConfigPatched = true;
+
+      const updatedDeclaration = ts.factory.updateVariableDeclaration(
+        declaration,
+        declaration.name,
+        declaration.exclamationToken,
+        declaration.type,
+        ts.factory.updateCallExpression(declaration.initializer, declaration.initializer.expression, declaration.initializer.typeArguments, [
+          ts.factory.updateObjectLiteralExpression(configObject, rewrittenProperties),
+        ])
+      );
+
+      return ts.factory.updateVariableStatement(
+        statement,
+        statement.modifiers,
+        ts.factory.updateVariableDeclarationList(
+          statement.declarationList,
+          statement.declarationList.declarations.map((item) => (item === declaration ? updatedDeclaration : item))
+        )
+      );
+    }
+
+    return statement;
+  });
+
+  const insertionIndex = updatedStatements.findIndex(
+    (statement) =>
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.some((declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'shared')
+  );
+
+  if (insertionIndex === -1) {
+    fail('Unable to locate shared config declaration in shared.ts');
+  }
+
+  const statementsWithDocsBase = hasDocsBase
+    ? updatedStatements
+    : [...updatedStatements.slice(0, insertionIndex), createDocsBaseStatement(), ...updatedStatements.slice(insertionIndex)];
+
+  const printed = printSourceFile(ts.factory.updateSourceFile(sourceFile, statementsWithDocsBase));
+
+  if (!defineConfigPatched) {
+    fail('Unable to locate shared defineConfig call in shared.ts');
+  }
+  expectMatch(printed, /const\s+docsBase\s*=\s*process\.env\.DOCS_BASE\s*\|\|\s*['"]\/['"]/, 'Failed to inject docsBase declaration into shared.ts');
+  expectMatch(printed, /\bbase:\s*docsBase\b/, 'Failed to inject base: docsBase into shared.ts');
+  expectMatch(printed, /href:\s*`?\$\{docsBase\}favicon\.ico`?/, 'Failed to patch favicon href in shared.ts');
+  if (!faviconPatched && !printed.includes('${docsBase}favicon.ico')) {
+    fail('Unable to verify favicon rewrite in shared.ts');
+  }
+
+  return printed;
+};
+
+const extractScriptSetup = (content, relativePath) => {
+  const match = content.match(/<script setup lang="ts">([\s\S]*?)<\/script>/);
+  if (!match || match.index === undefined) {
+    fail(`Unable to locate <script setup lang="ts"> in ${relativePath}`);
+  }
+  return {
+    start: match.index + '<script setup lang="ts">'.length,
+    end: match.index + match[0].length - '</script>'.length,
+    script: match[1],
+  };
+};
+
+const replaceScriptSetup = (content, relativePath, updater) => {
+  const extracted = extractScriptSetup(content, relativePath);
+  const updatedScript = updater(extracted.script);
+  return `${content.slice(0, extracted.start)}${updatedScript}${content.slice(extracted.end)}`;
+};
+
+const ensureNamedImport = (sourceFile, moduleName, importName) => {
+  let foundModule = false;
+  let lastImportIndex = -1;
+
+  const statements = sourceFile.statements.map((statement, index) => {
+    if (ts.isImportDeclaration(statement)) {
+      lastImportIndex = index;
+    }
+    if (!ts.isImportDeclaration(statement) || !ts.isStringLiteral(statement.moduleSpecifier) || statement.moduleSpecifier.text !== moduleName) {
+      return statement;
+    }
+
+    foundModule = true;
+    const namedBindings = statement.importClause?.namedBindings;
+    if (!namedBindings || !ts.isNamedImports(namedBindings)) {
+      fail(`Expected named imports from ${moduleName}`);
+    }
+
+    if (namedBindings.elements.some((element) => element.name.text === importName)) {
+      return statement;
+    }
+
+    return ts.factory.updateImportDeclaration(
+      statement,
+      statement.modifiers,
+      ts.factory.updateImportClause(
+        statement.importClause,
+        statement.importClause.isTypeOnly,
+        statement.importClause.name,
+        ts.factory.updateNamedImports(namedBindings, [...namedBindings.elements, ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(importName))])
+      ),
+      statement.moduleSpecifier,
+      statement.attributes
+    );
+  });
+
+  if (!foundModule) {
+    const importDeclaration = ts.factory.createImportDeclaration(
+      undefined,
+      ts.factory.createImportClause(
+        false,
+        undefined,
+        ts.factory.createNamedImports([ts.factory.createImportSpecifier(false, undefined, ts.factory.createIdentifier(importName))])
+      ),
+      ts.factory.createStringLiteral(moduleName)
+    );
+    const insertionIndex = lastImportIndex + 1;
+    return ts.factory.updateSourceFile(sourceFile, [
+      ...statements.slice(0, insertionIndex),
+      importDeclaration,
+      ...statements.slice(insertionIndex),
+    ]);
+  }
+
+  return ts.factory.updateSourceFile(sourceFile, statements);
+};
+
+const patchUseLocale = (content) => {
+  let sourceFile = parseSourceFile('.vitepress/theme/composables/useLocale.ts', content);
+  sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
+  let localePathPatched = false;
+
+  const transformer = (context) => {
+    const visit = (node) => {
+      if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.name.text === 'localePath') {
+        localePathPatched = true;
+        return ts.factory.updateVariableDeclaration(
+          node,
+          node.name,
+          node.exclamationToken,
+          node.type,
+          ts.factory.createCallExpression(ts.factory.createIdentifier('computed'), undefined, [
+            ts.factory.createArrowFunction(
+              undefined,
+              undefined,
+              [],
+              undefined,
+              ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+              ts.factory.createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [
+                    ts.factory.createConditionalExpression(
+                      ts.factory.createBinaryExpression(
+                        ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('lang'), 'value'),
+                        ts.SyntaxKind.EqualsEqualsEqualsToken,
+                        ts.factory.createStringLiteral('en')
+                      ),
+                      ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                      ts.factory.createStringLiteral('/'),
+                      ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                      ts.factory.createStringLiteral('/zh/')
+                    ),
+                  ]),
+                  'replace'
+                ),
+                undefined,
+                [ts.factory.createRegularExpressionLiteral('/\\/$/'), ts.factory.createStringLiteral('')]
+              )
+            ),
+          ])
+        );
+      }
+
+      return ts.visitEachChild(node, visit, context);
+    };
+
+    return (node) => ts.visitNode(node, visit);
+  };
+
+  const transformed = ts.transform(sourceFile, [transformer]).transformed[0];
+  const printed = printSourceFile(transformed);
+  if (!localePathPatched) {
+    fail('Unable to patch localePath in useLocale.ts');
+  }
+  expectMatch(printed, /import\s*\{\s*useData\s*,\s*withBase\s*\}\s*from\s*['"]vitepress['"];/, 'Failed to add withBase import to useLocale.ts');
+  expectMatch(printed, /withBase\(lang\.value\s*===\s*['"]en['"]\s*\?\s*['"]\/['"]\s*:\s*['"]\/zh\/['"]\)\.replace\(\/\\\/\$\//, 'Failed to patch localePath in useLocale.ts');
+  return printed;
+};
+
+const patchRoutesData = (content) => {
+  let sourceFile = parseSourceFile('.vitepress/theme/composables/routesData.ts', content);
+  sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
+  const patchedPaths = new Set();
+  const routePaths = ['/routes.json', '/categories.json'];
+
+  const transformer = (context) => {
+    const visit = (node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isIdentifier(node.expression) &&
+        node.expression.text === 'fetch' &&
+        node.arguments.length === 1
+      ) {
+        const argument = node.arguments[0];
+        const path = ts.isStringLiteral(argument)
+          ? argument.text
+          : ts.isCallExpression(argument) &&
+              ts.isIdentifier(argument.expression) &&
+              argument.expression.text === 'withBase' &&
+              argument.arguments.length === 1 &&
+              ts.isStringLiteral(argument.arguments[0])
+            ? argument.arguments[0].text
+            : undefined;
+
+        if (routePaths.includes(path)) {
+          patchedPaths.add(path);
+          if (ts.isStringLiteral(argument)) {
+            return ts.factory.updateCallExpression(node, node.expression, node.typeArguments, [
+              ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [argument]),
+            ]);
+          }
+        }
+      }
+
+      return ts.visitEachChild(node, visit, context);
+    };
+
+    return (node) => ts.visitNode(node, visit);
+  };
+
+  const transformed = ts.transform(sourceFile, [transformer]).transformed[0];
+  const printed = printSourceFile(transformed);
+  for (const path of routePaths) {
+    expectMatch(printed, new RegExp(`fetch\\(withBase\\(['"]${path}['"]\\)\\)`), `Failed to patch ${path} fetch in routesData.ts`);
+    if (!patchedPaths.has(path)) {
+      fail(`Missing ${path} fetch in routesData.ts`);
+    }
+  }
+  expectMatch(printed, /import\s*\{\s*withBase\s*\}\s*from\s*['"]vitepress['"];?/, 'Failed to add withBase import to routesData.ts');
+  return printed;
+};
+
+const patchNamespaceListScript = (script) => {
+  let sourceFile = parseSourceFile('NamespaceList.vue.ts', script);
+  sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
+  let imagePatched = false;
+
+  const transformer = (context) => {
+    const visit = (node) => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isPropertyAccessExpression(node.left) &&
+        node.left.expression.getText() === 'img' &&
+        node.left.name.text === 'src' &&
+        ts.isStringLiteral(node.right) &&
+        node.right.text === '/logo.png'
+      ) {
+        imagePatched = true;
+        return ts.factory.updateBinaryExpression(
+          node,
+          node.left,
+          node.operatorToken,
+          ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [ts.factory.createStringLiteral('/logo.png')])
+        );
+      }
+
+      return ts.visitEachChild(node, visit, context);
+    };
+
+    return (node) => ts.visitNode(node, visit);
+  };
+
+  const transformed = ts.transform(sourceFile, [transformer]).transformed[0];
+  const printed = printSourceFile(transformed);
+  expectMatch(printed, /import\s*\{[^}]*withBase[^}]*\}\s*from\s*['"]vitepress['"];?/, 'Failed to add withBase import to NamespaceList.vue');
+  expectMatch(printed, /img\.src\s*=\s*withBase\(['"]\/logo\.png['"]\);/, 'Failed to patch fallback logo in NamespaceList.vue');
+  if (!imagePatched) {
+    fail('Incomplete logo patch for NamespaceList.vue');
+  }
+  return printed;
+};
+
+const patchNamespaceDetailScript = (script) => {
+  let sourceFile = parseSourceFile('NamespaceDetail.vue.ts', script);
+  sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
+  let imagePatched = false;
+
+  const transformer = (context) => {
+    const visit = (node) => {
+      if (
+        ts.isBinaryExpression(node) &&
+        node.operatorToken.kind === ts.SyntaxKind.EqualsToken &&
+        ts.isPropertyAccessExpression(node.left) &&
+        node.left.expression.getText() === 'img' &&
+        node.left.name.text === 'src' &&
+        ts.isStringLiteral(node.right) &&
+        node.right.text === '/logo.png'
+      ) {
+        imagePatched = true;
+        return ts.factory.updateBinaryExpression(
+          node,
+          node.left,
+          node.operatorToken,
+          ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [ts.factory.createStringLiteral('/logo.png')])
+        );
+      }
+
+      return ts.visitEachChild(node, visit, context);
+    };
+
+    return (node) => ts.visitNode(node, visit);
+  };
+
+  const transformed = ts.transform(sourceFile, [transformer]).transformed[0];
+  const printed = printSourceFile(transformed);
+  expectMatch(printed, /import\s*\{[^}]*useRoute[^}]*withBase[^}]*\}\s*from\s*['"]vitepress['"];?/, 'Failed to add withBase import to NamespaceDetail.vue');
+  expectMatch(printed, /img\.src\s*=\s*withBase\(['"]\/logo\.png['"]\);/, 'Failed to patch fallback logo in NamespaceDetail.vue');
+  if (!imagePatched) {
+    fail('Incomplete logo patch for NamespaceDetail.vue');
+  }
+  return printed;
+};
+
+const patchMarkdownComposable = (content) => {
+  let sourceFile = parseSourceFile('.vitepress/theme/composables/markdown.ts', content);
+  sourceFile = ensureNamedImport(sourceFile, 'vitepress', 'withBase');
+  let renderMarkdownPatched = false;
+
+  const createRewriteHelperStatement = () =>
+    ts.factory.createVariableStatement(
+      undefined,
+      ts.factory.createVariableDeclarationList(
+        [
+          ts.factory.createVariableDeclaration(
+            ts.factory.createIdentifier('rewriteMarkdownAssetUrls'),
+            undefined,
+            undefined,
+            ts.factory.createArrowFunction(
+              undefined,
+              undefined,
+              [
+                ts.factory.createParameterDeclaration(
+                  undefined,
+                  undefined,
+                  ts.factory.createIdentifier('html'),
+                  undefined,
+                  ts.factory.createKeywordTypeNode(ts.SyntaxKind.StringKeyword)
+                ),
+              ],
+              undefined,
+              ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+              ts.factory.createCallExpression(
+                ts.factory.createPropertyAccessExpression(
+                  ts.factory.createCallExpression(
+                    ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('html'), 'replace'),
+                    undefined,
+                    [
+                      ts.factory.createRegularExpressionLiteral('/(href|src)="\\/(?!\\/)/g'),
+                      ts.factory.createArrowFunction(
+                        undefined,
+                        undefined,
+                        [
+                          ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('_')),
+                          ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('attr')),
+                        ],
+                        undefined,
+                        ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                        ts.factory.createBinaryExpression(
+                          ts.factory.createBinaryExpression(
+                            ts.factory.createIdentifier('attr'),
+                            ts.SyntaxKind.PlusToken,
+                            ts.factory.createStringLiteral('="')
+                          ),
+                          ts.SyntaxKind.PlusToken,
+                          ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [ts.factory.createStringLiteral('/')])
+                        )
+                      ),
+                    ]
+                  ),
+                  'replace'
+                ),
+                undefined,
+                [
+                  ts.factory.createRegularExpressionLiteral("/(href|src)='\\/(?!\\/)/g"),
+                  ts.factory.createArrowFunction(
+                    undefined,
+                    undefined,
+                    [
+                      ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('_')),
+                      ts.factory.createParameterDeclaration(undefined, undefined, ts.factory.createIdentifier('attr')),
+                    ],
+                    undefined,
+                    ts.factory.createToken(ts.SyntaxKind.EqualsGreaterThanToken),
+                    ts.factory.createBinaryExpression(
+                      ts.factory.createBinaryExpression(
+                        ts.factory.createIdentifier('attr'),
+                        ts.SyntaxKind.PlusToken,
+                        ts.factory.createStringLiteral("='")
+                      ),
+                      ts.SyntaxKind.PlusToken,
+                      ts.factory.createCallExpression(ts.factory.createIdentifier('withBase'), undefined, [ts.factory.createStringLiteral('/')])
+                    )
+                  ),
+                ]
+              )
+            )
+          ),
+        ],
+        ts.NodeFlags.Const
+      )
+    );
+
+  const transformer = (context) => {
+    const visit = (node) => {
+      if (
+        ts.isVariableDeclaration(node) &&
+        ts.isIdentifier(node.name) &&
+        node.name.text === 'renderMarkdown' &&
+        node.initializer &&
+        ts.isArrowFunction(node.initializer)
+      ) {
+        renderMarkdownPatched = true;
+        return ts.factory.updateVariableDeclaration(
+          node,
+          node.name,
+          node.exclamationToken,
+          node.type,
+          ts.factory.createArrowFunction(
+            node.initializer.modifiers,
+            node.initializer.typeParameters,
+            node.initializer.parameters,
+            node.initializer.type,
+            node.initializer.equalsGreaterThanToken,
+            ts.factory.createCallExpression(ts.factory.createIdentifier('rewriteMarkdownAssetUrls'), undefined, [
+              ts.factory.createConditionalExpression(
+                ts.factory.createIdentifier('inline'),
+                ts.factory.createToken(ts.SyntaxKind.QuestionToken),
+                ts.factory.createCallExpression(
+                  ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('md'), 'renderInline'),
+                  undefined,
+                  [ts.factory.createIdentifier('content'), ts.factory.createObjectLiteralExpression([ts.factory.createShorthandPropertyAssignment('t')])]
+                ),
+                ts.factory.createToken(ts.SyntaxKind.ColonToken),
+                ts.factory.createCallExpression(
+                  ts.factory.createPropertyAccessExpression(ts.factory.createIdentifier('md'), 'render'),
+                  undefined,
+                  [ts.factory.createIdentifier('content'), ts.factory.createObjectLiteralExpression([ts.factory.createShorthandPropertyAssignment('t')])]
+                )
+              ),
+            ])
+          )
+        );
+      }
+
+      return ts.visitEachChild(node, visit, context);
+    };
+
+    return (node) => ts.visitNode(node, visit);
+  };
+
+  const transformed = ts.transform(sourceFile, [transformer]).transformed[0];
+  const statements = [...transformed.statements];
+  const hasHelper = statements.some(
+    (statement) =>
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.some(
+        (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'rewriteMarkdownAssetUrls'
+      )
+  );
+  const renderMarkdownIndex = statements.findIndex(
+    (statement) =>
+      ts.isVariableStatement(statement) &&
+      statement.declarationList.declarations.some(
+        (declaration) => ts.isIdentifier(declaration.name) && declaration.name.text === 'renderMarkdown'
+      )
+  );
+  if (renderMarkdownIndex === -1) {
+    fail('Unable to locate renderMarkdown export in markdown.ts');
+  }
+  if (!hasHelper) {
+    statements.splice(renderMarkdownIndex, 0, createRewriteHelperStatement());
+  }
+  const printed = printSourceFile(ts.factory.updateSourceFile(transformed, statements));
+  if (!renderMarkdownPatched) {
+    fail('Unable to patch renderMarkdown in markdown.ts');
+  }
+  expectMatch(printed, /import\s*\{\s*withBase\s*\}\s*from\s*['"]vitepress['"];/, 'Failed to add withBase import to markdown.ts');
+  expectMatch(printed, /const\s+rewriteMarkdownAssetUrls\s*=\s*\(html:\s*string\)/, 'Failed to inject markdown asset rewrite helper');
+  expectMatch(printed, /rewriteMarkdownAssetUrls\(/, 'Failed to wrap renderMarkdown output');
+  return printed;
+};
+
+const ensureMarkdownRewrite = (content, relativePath, anchor, replacement, expected) => {
+  if (content.includes(expected)) {
+    return content;
+  }
+  if (!content.includes(anchor)) {
+    fail(`Unable to find rewrite anchor in ${relativePath}`);
+  }
+  const updated = content.replace(anchor, replacement);
+  if (!updated.includes(expected)) {
+    fail(`Failed to inject markdown asset rewrite into ${relativePath}`);
+  }
+  return updated;
+};
+
+const patchNamespaceDetail = (content) => {
+  return replaceScriptSetup(content, 'NamespaceDetail.vue', patchNamespaceDetailScript);
+};
+
+const patchNamespaceList = (content) => replaceScriptSetup(content, 'NamespaceList.vue', patchNamespaceListScript);
+
+writeFile('.vitepress/config/shared.ts', transformSharedConfig(readFile('.vitepress/config/shared.ts').content));
+writeFile('.vitepress/theme/composables/useLocale.ts', patchUseLocale(readFile('.vitepress/theme/composables/useLocale.ts').content));
+writeFile('.vitepress/theme/composables/routesData.ts', patchRoutesData(readFile('.vitepress/theme/composables/routesData.ts').content));
+writeFile('.vitepress/theme/composables/markdown.ts', patchMarkdownComposable(readFile('.vitepress/theme/composables/markdown.ts').content));
+writeFile('.vitepress/theme/components/NamespaceList.vue', patchNamespaceList(readFile('.vitepress/theme/components/NamespaceList.vue').content));
+writeFile('.vitepress/theme/components/NamespaceDetail.vue', patchNamespaceDetail(readFile('.vitepress/theme/components/NamespaceDetail.vue').content));
+
+console.log(`Patched docs site for base ${process.env.DOCS_BASE || '/'} at ${docsRoot}`);

@@ -1,0 +1,118 @@
+name: Docs Pages
+
+on:
+    workflow_dispatch:
+    push:
+        branches:
+            - master
+        paths:
+            - '.github/workflows/fork-docs-pages.yml'
+            - 'lib/**/*.ts'
+            - 'lib/**/*.tsx'
+            - 'scripts/workflow/build-docs.ts'
+            - 'scripts/workflow/build-routes.ts'
+            - 'scripts/workflow/data.ts'
+            - 'scripts/workflow/patch-docs-pages-base.cjs'
+            - 'package.json'
+            - 'pnpm-lock.yaml'
+    schedule:
+        - cron: '17 6 * * 1'
+
+permissions:
+    contents: read
+
+concurrency:
+    group: docs-pages
+    cancel-in-progress: true
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        timeout-minutes: 20
+        steps:
+            - name: Checkout RSSHub
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+            - name: Setup Pages
+              id: pages
+              uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+
+            - name: Resolve Pages base
+              run: |
+                  if [ -n "${{ steps.pages.outputs.base_path }}" ]; then
+                    echo "PAGES_BASE=${{ steps.pages.outputs.base_path }}/" >> "$GITHUB_ENV"
+                  else
+                    echo "PAGES_BASE=/" >> "$GITHUB_ENV"
+                  fi
+
+            - name: Checkout docs site
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: 'RSSNext/rsshub-docs'
+                  path: rsshub-docs
+
+            - name: Install pnpm
+              uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+
+            - name: Use Node.js Active LTS
+              uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version: lts/*
+                  cache: 'pnpm'
+                  cache-dependency-path: |
+                      pnpm-lock.yaml
+                      rsshub-docs/pnpm-lock.yaml
+
+            - name: Install RSSHub dependencies
+              run: pnpm install --frozen-lockfile
+
+            - name: Build docs data
+              run: pnpm build:docs
+
+            - name: Sync generated docs data
+              run: |
+                  cp ./assets/build/docs/routes.json ./rsshub-docs/src/public/routes.json
+                  cp ./assets/build/docs/categories.json ./rsshub-docs/src/public/categories.json
+                  cp ./lib/types.ts ./rsshub-docs/.vitepress/theme/types.ts
+                  cp ./scripts/workflow/data.ts ./rsshub-docs/.vitepress/config/data.ts
+
+            - name: Patch docs site for dynamic pages base
+              run: node scripts/workflow/patch-docs-pages-base.cjs
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
+
+            - name: Install docs dependencies
+              run: pnpm install --frozen-lockfile
+              working-directory: ./rsshub-docs
+
+            - name: Show resolved docs base
+              run: echo "DOCS_BASE=${DOCS_BASE}"
+              working-directory: ./rsshub-docs
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
+
+            - name: Build docs site
+              run: pnpm docs:build
+              working-directory: ./rsshub-docs
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
+
+            - name: Upload Pages artifact
+              uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+              with:
+                  path: ./rsshub-docs/.vitepress/dist
+
+    deploy:
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        needs: build
+        runs-on: ubuntu-latest
+        timeout-minutes: 10
+        permissions:
+            pages: write
+            id-token: write
+        steps:
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@v4
