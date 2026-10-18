@@ -110,13 +110,6 @@ interface VoiceInfo {
 async function handler(ctx) {
     const { pphId } = ctx.req.param();
 
-    const mobileBuildId = await cache.tryGet<string>('thepaper:m:buildId', async () => {
-        const response = await ofetch('https://m.thepaper.cn');
-        const $ = load(response);
-        const nextData = JSON.parse($('script#__NEXT_DATA__').text());
-        return nextData.buildId;
-    });
-
     const userInfo = await cache.tryGet<AuthorInfo>(`thepaper:user:${pphId}`, async () => {
         const response = await ofetch(`https://api.thepaper.cn/userservice/user/homePage/${pphId}`, {
             headers: {
@@ -154,13 +147,11 @@ async function handler(ctx) {
         async (item) => ({
             ...item,
             ...(await cache.tryGet(item.link!, async () => {
-                const response = await ofetch(`https://m.thepaper.cn/_next/data/${mobileBuildId}/detail/${item.contId}.json`, {
-                    query: {
-                        id: item.contId,
-                    },
-                });
+                const response = await ofetch(`https://m.thepaper.cn/newsDetail_forward_${item.contId}`);
+                const $ = load(response);
+                const nextData = JSON.parse($('#__NEXT_DATA__').text());
 
-                const contentDetail = response.pageProps.detailData.contentDetail;
+                const contentDetail = nextData.props.pageProps.detailData.contentDetail;
                 return {
                     description: contentDetail.content,
                     updated: parseSourceDate(contentDetail.updateTime),
