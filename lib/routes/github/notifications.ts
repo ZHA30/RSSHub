@@ -6,6 +6,12 @@ import { parseDate } from '@/utils/parse-date';
 
 const apiUrl = 'https://api.github.com';
 
+const formatTitle = (item) => {
+    const repository = item.repository?.full_name ?? 'GitHub';
+    const type = item.subject?.type ?? 'Unknown';
+    return `[${repository}|${type}] ${item.subject.title}`;
+};
+
 export const route: Route = {
     path: '/notifications',
     categories: ['programming'],
@@ -52,7 +58,7 @@ async function handler(ctx) {
             originUrl = originUrl.replace(/\/pulls\/(\d+)$/, '/pull/$1');
         }
         return {
-            title: item.subject.title,
+            title: formatTitle(item),
             description: item.subject.title,
             pubDate: parseDate(item.updated_at), // item.updated_at follows ISO 8601.
             guid: item.id,
