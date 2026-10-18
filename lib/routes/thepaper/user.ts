@@ -5,7 +5,7 @@ import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 
-import { parseSourceDate } from './utils';
+import { parseSourceDate, replaceVideos } from './utils';
 
 export const route: Route = {
     path: '/user/:pphId',
@@ -153,7 +153,7 @@ async function handler(ctx) {
 
                 const contentDetail = nextData.props.pageProps.detailData.contentDetail;
                 return {
-                    description: contentDetail.content,
+                    description: replaceVideos(contentDetail.content),
                     updated: parseSourceDate(contentDetail.updateTime),
                 };
             })),

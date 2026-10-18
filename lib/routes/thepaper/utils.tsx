@@ -26,6 +26,40 @@ const defaultRssItem = (item) => ({
         },
     },
 });
+const videoFrame = (src: string, poster?: string) => {
+    const srcdoc = renderToString(
+        <html>
+            <head>
+                <meta name="referrer" content="no-referrer" />
+                <style>{'html,body{margin:0;height:100%;background:#000}video{width:100%;height:100%;object-fit:contain}'}</style>
+            </head>
+            <body>
+                <video src={src} poster={poster} controls playsinline preload="metadata"></video>
+            </body>
+        </html>
+    );
+
+    return renderToString(<iframe title="视频" width="100%" height="400" frameborder="0" allowfullscreen referrerpolicy="no-referrer" srcdoc={srcdoc} style="border:0;width:100%"></iframe>);
+};
+
+// The media CDN rejects requests carrying a foreign referer, and <video> ignores the
+// referrerpolicy attribute, so embed videos in a no-referrer iframe instead.
+export const replaceVideos = (content?: string) => {
+    if (!content) {
+        return content;
+    }
+    const $ = load(content, undefined, false);
+    $('video').each((_, el) => {
+        const $video = $(el);
+        const src = $video.attr('src') ?? $video.find('source').attr('src');
+        if (!src) {
+            return;
+        }
+        $video.replaceWith(videoFrame(src, $video.attr('poster')));
+    });
+    return $.html();
+};
+
 async function processItem(item, ctx) {
     const useOldMode = ctx.req.query('old') === 'yes';
     if (item.link) {
@@ -56,6 +90,7 @@ async function processItem(item, ctx) {
             description = renderToString(<ThepaperImageDetail images={contentDetail.images} />) + description;
         }
     }
+    description = replaceVideos(description);
     let pubDate = parseSourceDate(item.pubTimeLong) ?? parseSourceDate(contentDetail.publishTime);
     if (!pubDate && contentDetail.pubTime) {
         pubDate = parseRelativeDate(contentDetail.pubTime);
