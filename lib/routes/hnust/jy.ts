@@ -87,6 +87,10 @@ const categories = {
 type CategoryKey = keyof typeof categories;
 type DetailType = (typeof categories)[CategoryKey]['detailType'];
 
+const panelTypeToCategory: Record<string, CategoryKey> = Object.fromEntries(
+    Object.entries(categories).map(([key, value]) => [value.panelType, key as CategoryKey])
+);
+
 type EmploymentItem = {
     notice_id?: string;
     recruitment_id?: string;
@@ -141,7 +145,10 @@ export const route: Route = {
     radar: [
         {
             source: ['jy.hnust.edu.cn/', 'jy.hnust.edu.cn/module/:path'],
-            target: '/jy/notice',
+            target: (_, url) => {
+                const typeId = new URL(url, rootUrl).searchParams.get('type_id');
+                return `/jy/${(typeId && panelTypeToCategory[typeId]) || 'notice'}`;
+            },
         },
     ],
     name: '就业服务网',
@@ -231,6 +238,10 @@ function getItemLink(item: EmploymentItem, detailType: DetailType, panelType: st
         return `${rootUrl}/detail/news?id=${item.notice_id}&type_id=${item.type || panelType}`;
     }
 
+    if (detailType === 'industry' && item.source_url) {
+        return item.source_url;
+    }
+
     if (detailType === 'industry' && item.info_id) {
         return `${rootUrl}/detail/industry?id=${item.info_id}&type_id=${panelType}`;
     }
@@ -304,20 +315,223 @@ async function parseDetail(link: string): Promise<Partial<DataItem>> {
 
     $('script, style, iframe').remove();
 
-    const title = $('h1').first().text().trim() || $('.dh-tit').first().text().trim() || $('.job-title').first().text().trim() || undefined;
+    const pageData = extractPageData(response.data);
+    const pageDataItem = pageData ? buildPageDataItem(pageData, link) : undefined;
+
+    const title = $('h1').first().text().trim() || $('.dh-tit').first().text().trim() || $('.job-title').first().text().trim() || pageDataItem?.title;
     const dateText = $('.dh-info, .info, .time')
         .toArray()
         .map((element) => $(element).text())
         .join(' ');
-    const date = dateText.match(/\d{4}年\d{1,2}月\d{1,2}日/)?.[0] || dateText.match(/\d{4}-\d{1,2}-\d{1,2}/)?.[0];
+    const date = dateText.match(/\d{4}年\d{1,2}月\d{1,2}日/)?.[0] || dateText.match(/\d{4}-\d{1,2}-\d{1,2}/)?.[0] || pageDataItem?.date;
 
-    const description = extractDescription($, link);
+    const description = pageDataItem?.description || extractDescription($, link);
 
     return {
         title,
         description: description || undefined,
-        pubDate: date ? timezone(parseDate(date), 8) : undefined,
+        pubDate: parseDetailDate(date),
     };
+}
+
+function parseDetailDate(value?: string): Date | undefined {
+    if (!value) {
+        return;
+    }
+
+    const date = parseDate(value.replaceAll('年', '-').replaceAll('月', '-').replace('日', ''));
+    return Number.isNaN(date.getTime()) ? undefined : timezone(date, 8);
+}
+
+type PageData = {
+    news?: {
+        content?: string;
+        file_name_url?: string;
+        create_time?: string;
+        author?: string;
+    };
+    online?: {
+        content?: string;
+        title?: string;
+        create_time?: string;
+    };
+    jobfair?: {
+        content?: string;
+        title?: string;
+        meet_end_time?: string;
+    };
+    career?: {
+        meet_name?: string;
+        company_name?: string;
+        meet_time?: string;
+        address?: string;
+        room?: string;
+    };
+    job?: {
+        job_descript?: string;
+        job_require?: string;
+        job_other?: string;
+        welfare?: string;
+        work_address?: string;
+        publish_time?: string;
+    };
+};
+
+function extractPageData(html: string): PageData | undefined {
+    const marker = 'window.PAGE_DATA = ';
+    const markerIndex = html.indexOf(marker);
+    if (markerIndex === -1) {
+        return;
+    }
+
+    const start = html.indexOf('{', markerIndex);
+    if (start === -1) {
+        return;
+    }
+
+    const end = findMatchingBrace(html, start);
+    if (end < 0) {
+        return;
+    }
+
+    try {
+        return JSON.parse(html.slice(start, end + 1));
+    } catch {
+        return;
+    }
+}
+
+function buildPageDataItem(pageData: PageData, link: string): { title?: string; description?: string; date?: string } | undefined {
+    const blocks: string[] = [];
+    let title: string | undefined;
+    let date: string | undefined;
+
+    if (pageData.news?.content) {
+        blocks.push(pageData.news.content);
+        date = pageData.news.create_time;
+    } else if (pageData.news?.file_name_url) {
+        blocks.push(`<p><a href="${pageData.news.file_name_url}">查看通知附件</a></p>`);
+        date = pageData.news.create_time;
+    }
+
+    if (pageData.online?.content) {
+        blocks.push(pageData.online.content);
+        title = pageData.online.title;
+        date = pageData.online.create_time;
+    }
+
+    if (pageData.jobfair?.content) {
+        blocks.push(pageData.jobfair.content);
+        title = pageData.jobfair.title;
+        date = pageData.jobfair.meet_end_time;
+    }
+
+    if (pageData.career) {
+        const career = pageData.career;
+        const rows = [
+            ['单位', career.company_name],
+            ['时间', career.meet_time],
+            ['地点', [career.address, career.room].filter(Boolean).join(' ')],
+        ].filter((row): row is [string, string] => Boolean(row[1]));
+        if (rows.length) {
+            blocks.push(rows.map(([label, value]) => `<p>${label}：${value}</p>`).join(''));
+            title = career.meet_name;
+        }
+    }
+
+    if (pageData.job) {
+        const job = pageData.job;
+        const rows = [
+            ['职位描述', job.job_descript],
+            ['职位要求', job.job_require],
+            ['其他', job.job_other],
+            ['福利', job.welfare],
+            ['工作地点', job.work_address],
+        ].filter((row): row is [string, string] => Boolean(row[1]));
+        if (rows.length) {
+            blocks.push(rows.map(([label, value]) => `<h3>${label}</h3>${value}`).join(''));
+            date = job.publish_time;
+        }
+    }
+
+    if (!blocks.length) {
+        return;
+    }
+
+    return {
+        title,
+        description: cleanPageDataContent(blocks.join(''), link),
+        date,
+    };
+}
+
+function cleanPageDataContent(content: string, baseUrl: string): string {
+    const $ = load(content);
+    $('script, style, iframe').remove();
+    $('img, video, source').each((_, element) => {
+        const node = $(element);
+        const src = node.attr('src');
+        if (src) {
+            node.attr('src', new URL(src, baseUrl).href);
+        }
+    });
+    $('a[href]').each((_, element) => {
+        const node = $(element);
+        const href = node.attr('href');
+        if (href && !href.startsWith('javascript:')) {
+            node.attr('href', new URL(href, baseUrl).href);
+        }
+    });
+    $('*').each((_, element) => {
+        const node = $(element);
+        for (const attribute of Object.keys(node.attr() ?? {})) {
+            if (!['href', 'src', 'poster', 'alt', 'title', 'colspan', 'rowspan'].includes(attribute)) {
+                node.removeAttr(attribute);
+            }
+        }
+    });
+
+    return $('body').html() ?? content;
+}
+
+function findMatchingBrace(text: string, start: number): number {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = start; i < text.length; i++) {
+        const char = text[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+            } else if (char === '\\') {
+                escaped = true;
+            } else if (char === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        switch (char) {
+            case '"':
+                inString = true;
+                break;
+            case '{':
+                depth++;
+                break;
+            case '}':
+                depth--;
+                if (depth === 0) {
+                    return i;
+                }
+                break;
+            default:
+                break;
+        }
+    }
+
+    return -1;
 }
 
 function extractDescription($: ReturnType<typeof load>, baseUrl: string): string {

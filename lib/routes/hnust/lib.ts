@@ -11,7 +11,6 @@ const appId = 1_822_991;
 const engineInstanceId = 2_597_947;
 const pageId = 358371;
 const websiteId = 199346;
-const sign = '5f2966d57ffc73440edbcd84df2a66ea';
 
 const categories = {
     all: {
@@ -86,11 +85,12 @@ async function handler(ctx) {
     const categoryKey = isCategoryKey(categoryParam) ? categoryParam : 'all';
     const category = categories[categoryKey];
     const currentUrl = `${rootUrl}/engine2/m/0/${appId}/${engineInstanceId}`;
+    const sign = await fetchSign(currentUrl);
 
     const list = (
         await Promise.all(
             category.typeIds.map(async (typeId) =>
-                (await fetchList(typeId)).map((item) => ({
+                (await fetchList(typeId, sign)).map((item) => ({
                     ...item,
                     link: getArticleLink(item),
                 }))
@@ -135,7 +135,18 @@ async function handler(ctx) {
     };
 }
 
-async function fetchList(typeId: string): Promise<LibraryItem[]> {
+async function fetchSign(pageUrl: string): Promise<string> {
+    const response = await got(pageUrl);
+    const sign = response.data.match(/var sign = "([^"]+)"/)?.[1];
+
+    if (!sign) {
+        throw new Error('Failed to read the library list signature');
+    }
+
+    return sign;
+}
+
+async function fetchList(typeId: string, sign: string): Promise<LibraryItem[]> {
     const response = await got.post(`${rootUrl}/engine2/general/${appId}/type/more-datas`, {
         form: {
             engineInstanceId,
@@ -164,7 +175,7 @@ async function fetchList(typeId: string): Promise<LibraryItem[]> {
     });
 
     if (response.data.code !== 1) {
-        throw new Error(`Failed to fetch library list: ${response.data.message ?? 'unknown error'}`);
+        throw new Error(`Failed to fetch library list (${typeId}): ${response.data.message ?? 'unknown error'}`);
     }
 
     return response.data.data.datas.datas;
