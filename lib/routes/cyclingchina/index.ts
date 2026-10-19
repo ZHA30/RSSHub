@@ -1,6 +1,7 @@
 import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
+import pMap from 'p-map';
 
 import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Data, DataItem, Route } from '@/types';
@@ -208,7 +209,7 @@ const handler = async (ctx: Context): Promise<Data> => {
     const { data: response } = await got(pageUrl);
     const $ = load(response);
     const list = parseListItems($, pageUrl);
-    const items = await Promise.all(list.map((item) => getItem(item, channelName)));
+    const items = await pMap(list, (item) => getItem(item, channelName), { concurrency: 3 });
     const icon = getAbsoluteUrl('/site/favicon.ico', rootUrl);
 
     return {
