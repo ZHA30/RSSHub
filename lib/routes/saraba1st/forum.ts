@@ -6,6 +6,7 @@ import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 export const route: Route = {
@@ -53,7 +54,7 @@ async function handler(ctx) {
     });
 
     if (typeid) {
-        params.set('filter', 'author');
+        params.set('filter', 'typeid');
         params.set('typeid', typeid);
     }
 
@@ -69,7 +70,7 @@ async function handler(ctx) {
         .replace(/ - +Stage1st.+$/, '')
         .trim();
 
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
     const list: DataItem[] = $('#threadlisttableid tbody[id^="normalthread_"]')
         .slice(0, limit)
         .toArray()
@@ -82,7 +83,7 @@ async function handler(ctx) {
             const pubDateText = item.find('td.by').first().find('em span').attr('title') || item.find('td.by').first().find('em span').text();
 
             return {
-                title: `${category ? `[${category}] ` : ''}${titleElement.text().trim()}`,
+                title: titleElement.text().trim(),
                 link: threadLink,
                 author: item.find('td.by').first().find('cite a').text().trim(),
                 pubDate: timezone(parseDate(pubDateText), +8),
