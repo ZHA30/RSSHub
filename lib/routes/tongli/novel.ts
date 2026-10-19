@@ -16,7 +16,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['tongli.com.tw/NovelDetail.aspx'],
+            source: ['www.tongli.com.tw/NovelDetail.aspx'],
             target: '/novel/books',
         },
     ],

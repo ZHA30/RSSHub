@@ -20,7 +20,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['tongli.com.tw/EpaperList.aspx'],
+            source: ['www.tongli.com.tw/EpaperList.aspx'],
             target: '/epaper',
         },
     ],

@@ -1,3 +1,4 @@
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 
 import { getBooks } from './utils';
@@ -36,19 +37,19 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['tongli.com.tw/webpagebooks.aspx'],
+            source: ['www.tongli.com.tw/webpagebooks.aspx'],
             target: '/comic/books',
         },
         {
-            source: ['tongli.com.tw/ThemeBL.aspx', 'tongli.com.tw/ThemeBLBooks.aspx'],
+            source: ['www.tongli.com.tw/ThemeBL.aspx', 'www.tongli.com.tw/ThemeBLBooks.aspx'],
             target: '/comic/bl',
         },
         {
-            source: ['tongli.com.tw/ThemeBeautiful.aspx'],
+            source: ['www.tongli.com.tw/ThemeBeautiful.aspx'],
             target: '/comic/beautiful',
         },
         {
-            source: ['tongli.com.tw/ThemeGL.aspx'],
+            source: ['www.tongli.com.tw/ThemeGL.aspx'],
             target: '/comic/gl',
         },
     ],
@@ -59,7 +60,11 @@ export const route: Route = {
 
 async function handler(ctx) {
     const { category = 'books' } = ctx.req.param();
-    const config = categories[category] ?? categories.books;
+    const config = categories[category];
+
+    if (!config) {
+        throw new InvalidParameterError(`Unsupported category: ${category}`);
+    }
 
     return await getBooks(config.path, `漫畫 - ${config.name}`);
 }
