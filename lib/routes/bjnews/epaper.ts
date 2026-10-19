@@ -67,16 +67,6 @@ function buildCategory(pageNo?: string, pageName?: string) {
     return [trimmedName ? `第${pageNo}版：${trimmedName}` : `第${pageNo}版`];
 }
 
-function formatItemTitle(title: string, category?: string[]) {
-    const categoryLabel = category?.[0]?.trim();
-
-    if (!categoryLabel || title.startsWith(`【${categoryLabel}】`)) {
-        return title;
-    }
-
-    return `【${categoryLabel}】${title}`;
-}
-
 function fetchArticleDetail(item: EpaperListItem) {
     return cache.tryGet(item.link, async () => {
         const response = await ofetch<string, 'text'>(item.link, {
@@ -90,7 +80,7 @@ function fetchArticleDetail(item: EpaperListItem) {
         const description = content.length ? content.html() : item.fallbackContent;
 
         return {
-            title: formatItemTitle(item.title, item.category),
+            title: item.title,
             link: item.link,
             ...(description ? { description } : {}),
             ...(item.issueDate ? { pubDate: timezone(parseDate(item.issueDate, 'YYYY-MM-DD'), +8) } : {}),
