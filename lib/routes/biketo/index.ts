@@ -2,6 +2,7 @@ import type { CheerioAPI } from 'cheerio';
 import { load } from 'cheerio';
 import type { Context } from 'hono';
 import iconv from 'iconv-lite';
+import pMap from 'p-map';
 
 import { config } from '@/config';
 import InvalidParameterError from '@/errors/types/invalid-parameter';
@@ -328,7 +329,7 @@ const fetchGb2312Page = async (url: string, referer = rootUrl) => {
         headers: getRequestHeaders(referer),
     });
 
-    return iconv.decode(data, 'gb2312');
+    return iconv.decode(data, 'gb18030');
 };
 
 const getDetailFetchUrl = (link: string) => {
@@ -488,7 +489,7 @@ const handler = async (ctx: Context): Promise<Data> => {
         throw new Error(response.message || '美骑网列表接口返回异常');
     }
 
-    const items = await Promise.all(parseListItems(response.data).map((item) => getItem(item)));
+    const items = await pMap(parseListItems(response.data), getItem, { concurrency: 3 });
 
     return {
         title: `${categoryConfig.title} - 美骑网`,
@@ -496,9 +497,6 @@ const handler = async (ctx: Context): Promise<Data> => {
         link: pageUrl,
         item: items,
         language: 'zh-CN',
-        image: getAbsoluteUrl('/skin/2016/public/images/hm-logo.png'),
-        icon: getAbsoluteUrl('/skin/2016/public/images/favicon.ico'),
-        logo: getAbsoluteUrl('/skin/2016/public/images/favicon.ico'),
     };
 };
 
