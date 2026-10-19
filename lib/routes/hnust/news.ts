@@ -4,6 +4,7 @@ import type { DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 const rootUrl = 'https://news.hnust.edu.cn';
@@ -78,8 +79,20 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['news.hnust.edu.cn/:category/index.htm', 'news.hnust.edu.cn/'],
+            source: ['news.hnust.edu.cn/:category/index.htm'],
             target: '/news/:category',
+        },
+        {
+            source: ['news.hnust.edu.cn/xbhc/index.htm'],
+            target: '/news/xbhc',
+        },
+        {
+            source: ['news.hnust.edu.cn/dzxb/index.htm'],
+            target: '/news/dzxb',
+        },
+        {
+            source: ['news.hnust.edu.cn/'],
+            target: '/news/home',
         },
     ],
     name: '新闻网',
@@ -100,7 +113,7 @@ async function handler(ctx) {
     const response = await got(currentUrl);
     const $ = load(response.data);
 
-    const items = categoryKey === 'home' ? parseHomeItems($) : parseItems($, currentUrl);
+    const items = categoryKey === 'home' ? parseHomeItems($, getRouteLimit(ctx, 30)) : parseItems($, currentUrl);
 
     const result = await Promise.all(
         items.map((item) => {
@@ -237,7 +250,7 @@ function parseTopicItems($: ReturnType<typeof load>, currentUrl: string): DataIt
     return items;
 }
 
-function parseHomeItems($: ReturnType<typeof load>): DataItem[] {
+function parseHomeItems($: ReturnType<typeof load>, limit: number): DataItem[] {
     const seen = new Set<string>();
     const items: DataItem[] = [];
 
@@ -261,11 +274,34 @@ function parseHomeItems($: ReturnType<typeof load>): DataItem[] {
         items.push({
             title,
             link,
-            pubDate: date ? timezone(parseDate(date, 'YYYY-MM-DD'), 8) : undefined,
+            pubDate: parseHomeDate(date),
         });
     });
 
-    return items.slice(0, 30);
+    return items.slice(0, limit);
+}
+
+function parseHomeDate(value: string): Date | undefined {
+    if (!value) {
+        return;
+    }
+
+    if (/^\d{4}-\d{2}-\d{2}/.test(value)) {
+        return timezone(parseDate(value, 'YYYY-MM-DD'), 8);
+    }
+
+    const monthDay = value.match(/^(\d{1,2})-(\d{1,2})$/);
+    if (!monthDay) {
+        return;
+    }
+
+    const now = new Date();
+    const date = new Date(now.getFullYear(), Number(monthDay[1]) - 1, Number(monthDay[2]));
+    if (date.getTime() > now.getTime() + 24 * 60 * 60 * 1000) {
+        date.setFullYear(date.getFullYear() - 1);
+    }
+
+    return timezone(date, 8);
 }
 
 async function parseDetail(link: string): Promise<Partial<DataItem>> {
