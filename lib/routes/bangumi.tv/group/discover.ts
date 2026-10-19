@@ -6,13 +6,12 @@ import type { Data, DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 const rootUrl = 'https://bgm.tv';
 
-type DiscoverItem = DataItem & {
-    groupTitle?: string;
-};
+type DiscoverItem = DataItem;
 
 export const route: Route = {
     path: '/group/discover',
@@ -48,7 +47,7 @@ async function handler(ctx): Promise<Data> {
     const link = new URL('/group/discover', rootUrl).href;
     const response = await ofetch(link);
     const $ = load(response);
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const list: DiscoverItem[] = $('.topic_list tbody tr')
         .toArray()
@@ -68,7 +67,7 @@ async function handler(ctx): Promise<Data> {
 
                 return {
                     ...item,
-                    description: content.html()?.trim() ?? item.description,
+                    description: content.html()?.trim() || item.description,
                 };
             }),
         { concurrency: 3 }
@@ -100,8 +99,6 @@ function parseListItem($: CheerioAPI, element): DiscoverItem {
         author: authorElement.text().trim(),
         pubDate: dateText ? timezone(parseDate(dateText, 'YYYY-M-D H:mm'), +8) : undefined,
         category: groupTitle ? [groupTitle] : undefined,
-        groupTitle,
-        description: titleElement.text().trim(),
     };
 }
 

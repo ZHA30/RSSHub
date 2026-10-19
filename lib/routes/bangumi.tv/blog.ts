@@ -7,6 +7,7 @@ import type { Data, DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
 const rootUrl = 'https://bangumi.tv';
@@ -138,7 +139,7 @@ async function handler(ctx): Promise<Data> {
     const currentUrl = new URL(categoryConfig.path, rootUrl).href;
     const response = await ofetch(currentUrl);
     const $ = load(response);
-    const limit = ctx.req.query('limit') ? Number.parseInt(ctx.req.query('limit'), 10) : 20;
+    const limit = getRouteLimit(ctx, 20);
 
     const list: DataItem[] = $('#entry_list div.item')
         .toArray()
@@ -157,11 +158,10 @@ async function handler(ctx): Promise<Data> {
                 normalizeLinks($$, content, item.link!);
 
                 const description = content.html()?.trim() ?? item.description;
-                const relatedSubjectsHtml = parseRelatedSubjects($$);
 
                 return {
                     ...item,
-                    description: [description, relatedSubjectsHtml].filter(Boolean).join('<br><br>'),
+                    description,
                 };
             }),
         { concurrency: 3 }
@@ -193,7 +193,6 @@ function parseListItem($: CheerioAPI, element): DataItem {
         pubDate: dateText ? timezone(parseDate(dateText, 'YYYY-M-D H:mm'), +8) : undefined,
         description: item.find('.content').html()?.trim(),
         category: subjectElement.length ? [subjectElement.text().trim()] : undefined,
-        image: getAbsoluteUrl(item.find('.cover img').first().attr('src')),
     };
 }
 
@@ -211,35 +210,6 @@ function normalizeLinks($: CheerioAPI, element, baseUrl: string) {
             $(image).attr('src', getAbsoluteUrl(src, baseUrl));
         }
     });
-}
-
-function parseRelatedSubjects($: CheerioAPI) {
-    const subjects = $('.entry-related-subjects a[href^="/subject/"]')
-        .toArray()
-        .map((anchor) => {
-            const link = new URL($(anchor).attr('href') ?? '', rootUrl).href;
-            const title = $(anchor).text().trim();
-
-            return title ? { link, title } : undefined;
-        })
-        .filter((subject) => subject !== undefined);
-
-    if (subjects.length === 0) {
-        return;
-    }
-
-    const section = $('<section></section>');
-    section.append('<h2>关联条目</h2>');
-    const list = $('<ul></ul>');
-
-    for (const subject of subjects) {
-        const anchor = $('<a></a>').attr('href', subject.link).text(subject.title);
-        $('<li></li>').append(anchor).appendTo(list);
-    }
-
-    section.append(list);
-
-    return section.toString();
 }
 
 function getAbsoluteUrl(url: string | undefined, baseUrl = rootUrl) {
