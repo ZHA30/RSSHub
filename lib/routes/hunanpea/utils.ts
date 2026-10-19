@@ -71,7 +71,7 @@ export async function parseList(categoryId: CategoryId): Promise<{
                           return {
                               ...item,
                               ...detail,
-                              pubDate: item.pubDate ?? detail.pubDate,
+                              pubDate: detail.pubDate ?? item.pubDate,
                           };
                       })
                     : item
@@ -85,7 +85,7 @@ async function parseDetail(link: string): Promise<Partial<DataItem>> {
     const $ = load(response);
 
     const content = $('#j-show-body').first();
-    content.find('script').remove();
+    content.find('script, style').remove();
 
     content.find('a').each((_, element) => {
         const href = $(element).attr('href');
@@ -101,15 +101,23 @@ async function parseDetail(link: string): Promise<Partial<DataItem>> {
         }
     });
 
-    const attachments = $('.xgld_nr').first();
-    attachments.find('a').each((_, element) => {
-        const href = $(element).attr('href');
-        if (href) {
-            $(element).attr('href', new URL(href, link).href);
-        }
-    });
+    cleanAttributes(content);
 
-    const description = [content.html(), attachments.html()].filter(Boolean).join('');
+    const attachments = $('.xgld_nr').first();
+    if (attachments.length) {
+        // The attachment block lives inside #j-show-body; detach it so it is not duplicated.
+        attachments.remove();
+        attachments.find('a').each((_, element) => {
+            const href = $(element).attr('href');
+            if (href) {
+                $(element).attr('href', new URL(href, link).href);
+            }
+        });
+        cleanAttributes(attachments);
+    }
+
+    const attachmentHtml = attachments.find('a').length > 0 ? attachments.html() : undefined;
+    const description = [content.html(), attachmentHtml].filter(Boolean).join('');
     const date =
         $('meta[name="PubDate"]').attr('content') ||
         $('.main_conftitp')
@@ -120,4 +128,10 @@ async function parseDetail(link: string): Promise<Partial<DataItem>> {
         description: description || undefined,
         pubDate: date ? timezone(parseDate(date), 8) : undefined,
     };
+}
+
+function cleanAttributes(content: ReturnType<ReturnType<typeof load>>) {
+    content.find('[style]').removeAttr('style');
+    content.find('[class]').removeAttr('class');
+    content.find('[id]').removeAttr('id');
 }

@@ -1,9 +1,10 @@
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 
 import { isCategoryId, parseList } from './utils';
 
 export const route: Route = {
-    path: '/kw/:id',
+    path: '/kw/:id?',
     categories: ['study'],
     example: '/hunanpea/kw/c103096',
     parameters: { id: '栏目 id，见下表，默认为 c103096' },
@@ -32,7 +33,10 @@ export const route: Route = {
 
 async function handler(ctx) {
     const id = ctx.req.param('id') ?? 'c103096';
-    const categoryId = isCategoryId(id) ? id : 'c103096';
 
-    return await parseList(categoryId);
+    if (!isCategoryId(id)) {
+        throw new InvalidParameterError(`Unsupported category: ${id}`);
+    }
+
+    return await parseList(id);
 }
