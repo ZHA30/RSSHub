@@ -146,7 +146,7 @@ const normalizeTagImageUrl = (url?: string) => {
     return normalized.replace(/^https?:\/\/(\w+)\.moyu\.im/, 'https://$1.sinaimg.cn');
 };
 
-const parseTagArticleList = (html: string) => {
+const parseTagArticleList = (html: string, tag: string) => {
     const $ = load(html);
     const items = $('.post-list .post-item')
         .toArray()
@@ -160,7 +160,7 @@ const parseTagArticleList = (html: string) => {
                 return;
             }
 
-            const image = normalizeTagImageUrl(element.find('.thumb img').attr('src'));
+            const image = normalizeTagImageUrl(element.find('.post-thumb img').attr('src'));
             const summary = element.find('.post-excerpt').text().trim();
             const category = element
                 .find('.post-tag a')
@@ -172,13 +172,13 @@ const parseTagArticleList = (html: string) => {
                 title,
                 link: new URL(link, tagRootUrl).href,
                 description: [image ? `<img src="${image}">` : '', summary].filter(Boolean).join('<br>'),
-                category,
+                category: category.length > 0 ? category : [tag],
             };
         })
         .filter((item): item is DataItem => item !== undefined);
 
     return {
-        title: $('h1.header-h1').first().text().trim() || $('title').text().trim() || '煎蛋',
+        title: $('title').text().trim() || '煎蛋',
         items,
     };
 };
@@ -209,14 +209,14 @@ const enrichTagArticle = (item: DataItem) =>
         } satisfies DataItem;
     });
 
-export const handleTag = async (tag: string) => {
+export const handleTag = async (tag: string, limit = 20) => {
     const currentUrl = `${tagRootUrl}/p/tag/${encodeURIComponent(tag)}`;
     const html = await ofetch<string, 'text'>(currentUrl, {
         responseType: 'text',
         headers: { 'User-Agent': config.ua },
     });
-    const { title, items } = parseTagArticleList(html);
-    const enrichedItems = await pMap(items, enrichTagArticle, { concurrency: 3 });
+    const { title, items } = parseTagArticleList(html, tag);
+    const enrichedItems = await pMap(items.slice(0, limit), enrichTagArticle, { concurrency: 3 });
 
     return {
         title: title === '新鲜事' ? '煎蛋 - 新鲜事' : `煎蛋 - ${title}`,

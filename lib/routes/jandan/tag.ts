@@ -1,4 +1,5 @@
 import type { DataItem, Route } from '@/types';
+import { getRouteLimit } from '@/utils/route-limit';
 
 import { handleTag } from './utils';
 
@@ -34,7 +35,7 @@ async function handler(ctx): Promise<{
     link: string;
     item: DataItem[];
 }> {
-    const result = await handleTag(ctx.req.param('tag'));
+    const result = await handleTag(ctx.req.param('tag'), getRouteLimit(ctx, 20));
 
     return {
         title: result.title,
