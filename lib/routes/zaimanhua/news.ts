@@ -1,6 +1,7 @@
 import { load } from 'cheerio';
 import pMap from 'p-map';
 
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
@@ -54,7 +55,6 @@ export const route: Route = {
         supportBT: false,
         supportPodcast: false,
         supportScihub: false,
-        nsfw: true,
     },
     radar: [
         {
@@ -72,7 +72,12 @@ export const route: Route = {
 
 async function handler(ctx) {
     const categoryParam = ctx.req.param('category') || '';
-    const category = (categoryParam in categories ? categoryParam : '') as Category;
+
+    if (!(categoryParam in categories)) {
+        throw new InvalidParameterError(`Unsupported category: ${categoryParam}`);
+    }
+
+    const category = categoryParam as Category;
     const categoryName = categories[category] || categories[''];
     const link = new URL(category, rootUrl).href;
     const response = await ofetch(link, { headers });
@@ -144,6 +149,7 @@ async function fetchDetail(link: string) {
     const content = $('.news_content_con');
 
     content.find('#content_page, .page').remove();
+    content.find('img[src*="news_bottom_pic"]').remove();
 
     return {
         description: content.html() || undefined,
