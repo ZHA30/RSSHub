@@ -45,7 +45,7 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['tongli.com.tw/Search3.aspx'],
+            source: ['www.tongli.com.tw/Search3.aspx'],
             target: '/ranking',
         },
     ],
@@ -78,12 +78,11 @@ async function handler(ctx) {
                 }
 
                 const link = new URL(href, baseUrl).href;
-                const metadata = [`<p>榜單：${itemCategory}</p>`, `<p>名次：#${rank}</p>`, period ? `<p>榜單期間：${period}</p>` : undefined].filter(Boolean).join('');
 
                 return {
                     title: `#${rank} ${title}`,
                     author,
-                    description: [image ? `<p><img src="${new URL(image, baseUrl).href}"></p>` : undefined, metadata].filter(Boolean).join(''),
+                    description: image ? `<p><img src="${new URL(image, baseUrl).href}"></p>` : undefined,
                     link,
                     guid: `tongli:ranking:${period}:${prefix}:${rank}:${link}`,
                     category: [itemCategory],
