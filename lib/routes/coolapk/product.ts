@@ -32,7 +32,7 @@ async function handler(ctx) {
     const keyword = ctx.req.param('keyword');
     const product = await getProductByKeyword(keyword);
 
-    return await getProductFeed(product.id, product.title, product.url);
+    return getProductFeed(product.id, product.title, product.url);
 }
 
 async function getProductByKeyword(keyword) {
@@ -71,31 +71,22 @@ async function getProductFeed(id, fallbackTitle, fallbackUrl) {
     });
     const data = response.data.data;
     if (!data) {
-        throw new InvalidParameterError('这个产品还没有动态内容。');
+        return {
+            title: `酷安产品-${fallbackTitle || id}`,
+            link: getProductUrl(id, fallbackUrl),
+            item: [],
+        };
     }
 
-    let targetTitle = fallbackTitle;
-    let targetUrl = fallbackUrl;
-    let out = await Promise.all(
-        data.map((item) => {
-            if (item.targetRow) {
-                targetTitle ||= item.targetRow.title;
-                targetUrl ||= item.targetRow.url;
-            }
-
-            return utils.parseDynamic(item);
-        })
-    );
-
-    out = out.filter(Boolean);
-    if (out.length === 0) {
-        throw new InvalidParameterError('这个产品还没有图文或动态。');
-    }
+    const out = (await Promise.all(data.map((item) => utils.parseDynamic(item)))).filter(Boolean);
 
     return {
-        title: `酷安产品-${targetTitle || id}`,
-        link: `https://www.coolapk.com${targetUrl || `/product/${id}`}`,
-        description: `酷安产品-${targetTitle || id}`,
+        title: `酷安产品-${fallbackTitle || id}`,
+        link: getProductUrl(id, fallbackUrl),
         item: out,
     };
+}
+
+function getProductUrl(id: string, url?: string) {
+    return url?.startsWith('http') ? url : `https://www.coolapk.com${url || `/product/${id}`}`;
 }
