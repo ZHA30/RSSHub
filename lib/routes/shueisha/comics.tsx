@@ -1,8 +1,10 @@
+import { load } from 'cheerio';
 import { renderToString } from 'hono/jsx/dom/server';
 
 import type { Route } from '@/types';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
+import timezone from '@/utils/timezone';
 
 const rootUrl = 'https://www.shueisha.co.jp';
 const comicsUrl = `${rootUrl}/books/comics/index.html`;
@@ -22,6 +24,10 @@ const categories = {
     young: {
         name: '青年',
         classifications: ['青年'],
+    },
+    other: {
+        name: 'その他',
+        classifications: ['その他'],
     },
 };
 
@@ -49,7 +55,8 @@ type ShueishaData = {
 };
 
 const extractInitialData = (html: string): ShueishaData => {
-    const matched = html.match(/var ssd = (\{.*?\});\s*var ssdMags = /s);
+    const script = load(html)('script:contains("var ssd =")').first().text();
+    const matched = script.match(/var ssd = (\{.*?\});\s*var ssdMags =/s);
 
     if (!matched) {
         throw new Error('Failed to extract comics data from Shueisha page');
@@ -61,38 +68,13 @@ const extractInitialData = (html: string): ShueishaData => {
 const getBookLink = (isbn: string) => `${rootUrl}/books/items/contents.html?isbn=${encodeURIComponent(isbn)}`;
 
 const renderDescription = (item: ShueishaBook) =>
-    renderToString(
-        <div>
-            {item.image_url && <img src={item.image_url} alt={item.item_name} />}
-            <p>{item.label_name}</p>
-            <table>
-                <tbody>
-                    <tr>
-                        <td>著者</td>
-                        <td>{item.author_name_datas.join('、')}</td>
-                    </tr>
-                    <tr>
-                        <td>分類</td>
-                        <td>{item.classification_datas.join('、')}</td>
-                    </tr>
-                    <tr>
-                        <td>ISBN</td>
-                        <td>{item.isbn}</td>
-                    </tr>
-                    <tr>
-                        <td>試し読み</td>
-                        <td>{item.tameshiyomi_flg === 1 ? 'あり' : 'なし'}</td>
-                    </tr>
-                </tbody>
-            </table>
-        </div>
-    );
+    renderToString(<div>{item.image_url && <img src={item.image_url} alt={item.item_name} />}</div>);
 
 export const route: Route = {
     path: '/comics/:category?',
     categories: ['reading'],
     example: '/shueisha/comics/boy',
-    parameters: { category: '分类，all - 全部，boy - 少年，girl - 少女・女性，young - 青年，默认为 all' },
+    parameters: { category: '分类，all - 全部，boy - 少年，girl - 少女・女性，young - 青年，other - その他，默认为 all' },
     features: {
         requireConfig: false,
         requirePuppeteer: false,
@@ -103,14 +85,14 @@ export const route: Route = {
     },
     radar: [
         {
-            source: ['shueisha.co.jp/books/comics/index.html', 'shueisha.co.jp/books/comics/'],
+            source: ['www.shueisha.co.jp/books/comics/index.html', 'www.shueisha.co.jp/books/comics/'],
             target: '/comics',
         },
     ],
     name: 'コミックス',
     maintainers: ['ZHA30'],
     handler,
-    url: 'shueisha.co.jp/books/comics/index.html',
+    url: 'www.shueisha.co.jp/books/comics/index.html',
 };
 
 async function handler(ctx) {
@@ -132,7 +114,7 @@ async function handler(ctx) {
                 guid: book.ssid || book.isbn,
                 author: book.author_name_datas.join('、'),
                 category: [book.label_name, ...book.classification_datas],
-                pubDate: parseDate(group.release_date, 'YYYY-MM-DD'),
+                pubDate: timezone(parseDate(group.release_date, 'YYYY-MM-DD'), +9),
                 description: renderDescription(book),
             }))
     );
