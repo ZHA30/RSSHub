@@ -63,7 +63,7 @@ async function fetchItems(category: SourceCategory, showCategory: boolean): Prom
 
     return $('#list tbody tr')
         .toArray()
-        .map((item) => {
+        .flatMap((item) => {
             const row = $(item);
             const linkElement = row.find('td.link a');
             const title = linkElement.attr('title') || linkElement.text().trim().replace(/\/$/, '');
@@ -73,21 +73,18 @@ async function fetchItems(category: SourceCategory, showCategory: boolean): Prom
             const pubDate = date && date !== '-' ? timezone(parseDate(date, 'YYYY-MMM-DD HH:mm', 'en'), 0) : undefined;
 
             if (!title || !link || title === 'Parent directory') {
-                return;
+                return [];
             }
 
-            return {
-                title: showCategory ? `[${categoryMap[category]}] ${title}` : title,
-                link,
-                guid: link,
-                pubDate,
-                content: {
-                    html: '<span></span>',
-                    text: '',
+            return [
+                {
+                    title: showCategory ? `[${categoryMap[category]}] ${title}` : title,
+                    link,
+                    guid: link,
+                    pubDate,
                 },
-            };
-        })
-        .filter((item): item is DownloadItem => !!item);
+            ];
+        });
 }
 
 function getCategory(category?: string): Category {
