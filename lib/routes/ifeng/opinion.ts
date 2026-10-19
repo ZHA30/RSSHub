@@ -1,12 +1,14 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
-import { extractDoc } from './utils';
+import { extractDoc, extractIfengData, extractNewsstream } from './utils';
 
 const categories = {
     zhengnengliang: {
@@ -18,11 +20,6 @@ const categories = {
         name: '风声',
         type: 'media',
         id: '7408',
-    },
-    fengdong: {
-        name: '风洞',
-        type: 'media',
-        id: '1602814',
     },
     fengxiang: {
         name: '风向',
@@ -52,9 +49,9 @@ export const route: Route = {
     name: '评论',
     maintainers: ['ZHA30'],
     handler,
-    description: `| 首页 | 政能亮         | 风声      | 风洞     | 风向      | 暖新闻    |
-| ---- | -------------- | --------- | -------- | --------- | --------- |
-|      | zhengnengliang | fengsheng | fengdong | fengxiang | warmstory |`,
+    description: `| 首页 | 政能亮         | 风声      | 风向      | 暖新闻    |
+| ---- | -------------- | --------- | --------- | --------- |
+|      | zhengnengliang | fengsheng | fengxiang | warmstory |`,
     radar: [
         {
             source: ['pl.ifeng.com/shanklist/original/:id', 'pl.ifeng.com/'],
@@ -63,10 +60,6 @@ export const route: Route = {
         {
             source: ['ishare.ifeng.com/mediaShare/home/7408/media'],
             target: '/opinion/fengsheng',
-        },
-        {
-            source: ['ishare.ifeng.com/mediaShare/home/1602814/media'],
-            target: '/opinion/fengdong',
         },
         {
             source: ['news.ifeng.com/shanklist/3-245389-'],
@@ -93,12 +86,11 @@ async function handler(ctx) {
     const $ = load(response?.data ?? '');
     const newsstream = category?.type === 'media' ? await getMediaNewsstream(category.id) : extractNewsstream(response.data);
 
-    const items = await Promise.all(newsstream.slice(0, 20).map((item) => parseItem(item)));
+    const items = await pMap(newsstream.slice(0, getRouteLimit(ctx, 20)), parseItem, { concurrency: 3 });
 
     return {
         title: category ? `凤凰网评论 - ${category.name}` : $('title').text(),
         link: currentUrl,
-        allowEmpty: categoryKey === 'fengdong',
         item: items,
     };
 }
@@ -122,39 +114,16 @@ async function getMediaNewsstream(id: string) {
     return JSON.parse(response.data.match(/getListData\((.*)\)/s)[1]).data;
 }
 
-function extractNewsstream(data: string) {
-    const start = data.indexOf('"newsstream":[');
-    if (start === -1) {
-        throw new Error('newsstream not found');
-    }
-
-    const arrayStart = data.indexOf('[', start);
-    let depth = 0;
-    for (let i = arrayStart; i < data.length; i++) {
-        if (data[i] === '[') {
-            depth++;
-        } else if (data[i] === ']') {
-            depth--;
-            if (depth === 0) {
-                return JSON.parse(data.slice(arrayStart, i + 1));
-            }
-        }
-    }
-
-    throw new Error('newsstream is incomplete');
-}
-
 function parseItem(item) {
     const link = normalizeUrl(item.url);
     const image = item.thumbnail ? { url: item.thumbnail } : item.thumbnails?.image?.[0];
 
     return cache.tryGet(`ifeng:opinion:detail:${item.base62Id || item.id || link}`, async () => {
         const detailResponse = await got(link);
-        const detail = detailResponse.data;
-        const contentListMatch = detail.match(/"contentList":(\[.*?\]),"currentPage"/s);
-        const contentList = contentListMatch ? JSON.parse(contentListMatch[1]) : undefined;
-        const author = getLastMatchedValue(detail, /"editorName":"(.*?)"/g);
-        const keywords = getLastMatchedValue(detail, /"keywords":"(.*?)"/g);
+        const detail = extractIfengData(detailResponse.data);
+        const contentList = detail?.docData?.contentData?.contentList;
+        const author = detail?.docData?.editorName;
+        const keywords = detail?.keywords ?? detail?.docData?.keywords;
 
         return {
             title: item.title,
@@ -163,11 +132,7 @@ function parseItem(item) {
             pubDate: item.newsTime ? timezone(parseDate(item.newsTime), +8) : undefined,
             author: author || undefined,
             category: keywords ? keywords.split(',').filter(Boolean) : undefined,
-            description: contentList ? extractDoc(contentList) : image ? `<img src="${image.url}" width="${image.width ?? ''}" height="${image.height ?? ''}">` : undefined,
+            description: contentList ? extractDoc(contentList) : image ? `<img src="${image.url}"${image.width ? ` width="${image.width}"` : ''}${image.height ? ` height="${image.height}"` : ''}>` : undefined,
         };
     });
-}
-
-function getLastMatchedValue(text: string, regexp: RegExp) {
-    return [...text.matchAll(regexp)].pop()?.[1];
 }

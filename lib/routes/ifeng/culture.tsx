@@ -1,12 +1,14 @@
 import { load } from 'cheerio';
+import pMap from 'p-map';
 
 import type { Route } from '@/types';
 import cache from '@/utils/cache';
 import got from '@/utils/got';
 import { parseDate } from '@/utils/parse-date';
+import { getRouteLimit } from '@/utils/route-limit';
 import timezone from '@/utils/timezone';
 
-import { extractDoc } from './utils';
+import { extractDoc, extractIfengData, extractNewsstream } from './utils';
 
 const categories = {
     news: {
@@ -74,20 +76,20 @@ async function handler(ctx) {
 
     const response = await got(currentUrl);
     const $ = load(response.data);
-    const newsstream = JSON.parse(response.data.match(/"newsstream":(\[.*?\]),"cooperation"/s)[1]);
+    const newsstream = extractNewsstream(response.data);
 
-    const items = await Promise.all(
-        newsstream.slice(0, 20).map((item) => {
+    const items = await pMap(
+        newsstream.slice(0, getRouteLimit(ctx, 20)),
+        (item) => {
             const link = normalizeUrl(item.url);
             const image = item.thumbnails?.image?.[0];
 
             return cache.tryGet(`ifeng:culture:detail:${item.base62Id || link}`, async () => {
                 const detailResponse = await got(link);
-                const detail = detailResponse.data;
-                const contentListMatch = detail.match(/"contentList":(\[.*?\]),"currentPage"/s);
-                const contentList = contentListMatch ? JSON.parse(contentListMatch[1]) : undefined;
-                const author = getLastMatchedValue(detail, /"editorName":"(.*?)"/g);
-                const keywords = getLastMatchedValue(detail, /"keywords":"(.*?)"/g);
+                const detail = extractIfengData(detailResponse.data);
+                const contentList = detail?.docData?.contentData?.contentList;
+                const author = detail?.docData?.editorName;
+                const keywords = detail?.keywords ?? detail?.docData?.keywords;
 
                 return {
                     title: item.title,
@@ -99,7 +101,8 @@ async function handler(ctx) {
                     description: contentList ? extractDoc(contentList) : image ? `<img src="${image.url}" width="${image.width}" height="${image.height}">` : undefined,
                 };
             });
-        })
+        },
+        { concurrency: 3 }
     );
 
     return {
@@ -111,8 +114,4 @@ async function handler(ctx) {
 
 function normalizeUrl(url: string) {
     return url.startsWith('//') ? `https:${url}` : url;
-}
-
-function getLastMatchedValue(text: string, regexp: RegExp) {
-    return [...text.matchAll(regexp)].pop()?.[1];
 }
