@@ -1,10 +1,12 @@
 import type { Cheerio } from 'cheerio';
 import { load } from 'cheerio';
 import type { Element } from 'domhandler';
+import pMap from 'p-map';
 
 import type { Data, DataItem, Route } from '@/types';
 import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
+import { getRouteLimit } from '@/utils/route-limit';
 
 const feedApiUrl = 'https://api-public.lingowhale.com/api/lingowhale/v1/feed/subscription';
 const detailApiUrl = 'https://api-public.lingowhale.com/api/lingowhale/v1/entry_detail/get';
@@ -93,16 +95,6 @@ export const route: Route = {
     },
     description: '通过语鲸公开频道接口抓取频道内容，并用公开详情接口补全文章正文。可通过 `?link=render` 将条目链接切换为语鲸阅读页，默认为原网页链接。',
     handler,
-};
-
-const clampLimit = (limit?: string) => {
-    const parsed = Number.parseInt(limit ?? '', 10);
-
-    if (Number.isNaN(parsed) || parsed <= 0) {
-        return defaultLimit;
-    }
-
-    return Math.min(parsed, maxLimit);
 };
 
 const getFeedHeaders = () => ({
@@ -230,9 +222,8 @@ const fetchEntryDetail = async (entryId: string, entryType: number) => {
 
 async function handler(ctx): Promise<Data> {
     const channelId = ctx.req.param('channelId');
-    const limit = clampLimit(ctx.req.query('limit'));
+    const limit = Math.min(getRouteLimit(ctx, defaultLimit), maxLimit);
     const linkMode = getLinkMode(ctx.req.query('link'));
-    ctx.header('Cache-Control', 'no-cache');
 
     const feedResponse = await ofetch<LingowhaleApiResponse<LingowhaleFeedListData>>(feedApiUrl, {
         method: 'POST',
@@ -251,8 +242,9 @@ async function handler(ctx): Promise<Data> {
     const feedList = feedResponse.data?.feed_list ?? [];
     const firstChannel = feedList[0]?.channel;
 
-    const items: DataItem[] = await Promise.all(
-        feedList.slice(0, limit).map(async (entry) => {
+    const items: DataItem[] = await pMap(
+        feedList.slice(0, limit),
+        async (entry) => {
             const detail = await cache.tryGet(`lingowhale:entry:${entryCacheVersion}:${entry.entry_id}`, () => fetchEntryDetail(entry.entry_id, entry.entry_type));
             const rid = detail.entry_id || entry.entry_id;
             const renderUrl = `${webBaseUrl}/reader/web/render?rid=${rid}`;
@@ -268,7 +260,8 @@ async function handler(ctx): Promise<Data> {
                 description: getDescription(detail, entry),
                 image: getSurfaceUrl(detail.surface_url) || getSurfaceUrl(entry.surface_url),
             };
-        })
+        },
+        { concurrency: 3 }
     );
 
     return {
