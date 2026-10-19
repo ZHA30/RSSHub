@@ -1,6 +1,8 @@
 import { load } from 'cheerio';
 
+import InvalidParameterError from '@/errors/types/invalid-parameter';
 import type { DataItem, Route } from '@/types';
+import cache from '@/utils/cache';
 import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/parse-date';
 
@@ -20,38 +22,92 @@ const isCategoryKey = (category: string): category is CategoryKey => category in
 
 async function handler(ctx) {
     const categoryParam = ctx.req.param('category') ?? 'xiangbo_dongtai_news';
-    const categoryKey = isCategoryKey(categoryParam) ? categoryParam : 'xiangbo_dongtai_news';
+    if (!isCategoryKey(categoryParam)) {
+        throw new InvalidParameterError(`Unsupported category: ${categoryParam}`);
+    }
+    const categoryKey = categoryParam;
     const categoryName = categories[categoryKey];
     const currentUrl = new URL(`/zh-hans/${categoryKey}`, rootUrl).href;
 
     const response = await ofetch(currentUrl);
     const $ = load(response);
+    const list = parseItems($, currentUrl);
+    const items = await Promise.all(
+        list.map(async (item) => {
+            try {
+                const detail = await cache.tryGet(`hnmuseum:news:${item.link}`, () => parseDetail(item.link!));
+                return {
+                    ...item,
+                    ...detail,
+                    title: item.title,
+                };
+            } catch {
+                return item;
+            }
+        })
+    );
 
     return {
         title: `湖南博物院 - ${categoryName}`,
         link: currentUrl,
         description: `湖南博物院 - ${categoryName}`,
-        item: parseItems($, currentUrl),
+        item: items,
+    };
+}
+
+async function parseDetail(link: string): Promise<Partial<DataItem>> {
+    const response = await ofetch(link);
+    const $ = load(response);
+    const content = $('.node .field-name-body .field-item').first();
+
+    if (!content.length) {
+        return {};
+    }
+
+    content.find('script, style').remove();
+    content.find('img, video, source').each((_, element) => {
+        const node = $(element);
+        const src = node.attr('src');
+        if (src) {
+            node.attr('src', new URL(src, link).href);
+        }
+    });
+    content.find('a[href]').each((_, element) => {
+        const node = $(element);
+        const href = node.attr('href');
+        if (href) {
+            node.attr('href', new URL(href, link).href);
+        }
+    });
+
+    return {
+        description: content.html() ?? undefined,
+        author: $('.field-name-field-news-author .field-item').first().text().trim() || undefined,
     };
 }
 
 function parseItems($: ReturnType<typeof load>, currentUrl: string): DataItem[] {
     return $('.view-content .views-row')
         .toArray()
-        .map((element) => {
+        .flatMap((element) => {
             const item = $(element);
             const titleElement = item.find('.views-field-title a, .views-field-title-1 a').first();
             const title = titleElement.text().trim();
             const href = titleElement.attr('href');
             const date = item.find('.date-display-single').attr('content') ?? item.find('.date-display-single').text().trim();
 
-            return {
-                title,
-                link: new URL(href ?? '', currentUrl).href,
-                pubDate: date ? parseDate(date) : undefined,
-            };
-        })
-        .filter((item) => item.title);
+            if (!title || !href) {
+                return [];
+            }
+
+            return [
+                {
+                    title,
+                    link: new URL(href, currentUrl).href,
+                    pubDate: date ? parseDate(date) : undefined,
+                },
+            ];
+        });
 }
 
 export const route: Route = {
