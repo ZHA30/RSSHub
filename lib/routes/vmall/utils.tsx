@@ -48,6 +48,7 @@ export interface UserInfo {
     avatar?: string;
     description?: string;
     introduce?: string;
+    shareUrl?: string;
     fansCount?: number;
     followCount?: number;
 }
@@ -82,6 +83,8 @@ export interface Thread {
     publishTime?: number | string;
     editTime?: number | string;
     threadType?: number | string;
+    threadShareUrl?: string;
+    threadUrl?: string;
     authorId?: number | string;
     authorIdStr?: string;
     authorInfo?: AuthorInfo;
@@ -118,6 +121,7 @@ interface AuthorInfo {
     nickName?: string;
     avatarUrl?: string;
     avatar?: string;
+    shareUrl?: string;
     certificationType?: string;
 }
 
@@ -134,12 +138,18 @@ interface ImageInfo {
 
 export const getCircleLink = (id: string) => `${webRoot}/mhw/consumer/cn/community/mhwnews/allcircle/id_${id}`;
 
-export const getUserLink = (id: string) => `${webRoot}/mhw/consumer/cn/community/mhwnews/bluevstore/id_${id}`;
+export const getUserLink = (id: string) => `${webRoot}/mhw/consumer/cn/community/mhwnews/userhome/id_${id}`;
 
 const getThreadId = (thread: Thread) => String(thread.threadIdStr ?? thread.threadId ?? thread.id ?? '');
 
 export const getThreadLink = (thread: Thread) => {
     const id = getThreadId(thread);
+    const shareUrl = thread.threadShareUrl ?? thread.threadUrl;
+
+    if (shareUrl) {
+        return new URL(shareUrl, webRoot).href;
+    }
+
     const type = Number(thread.threadType);
 
     if (type === 1) {
@@ -291,6 +301,9 @@ const getAuthor = (thread: Thread) => {
 
 const getAuthorUrl = (thread: Thread) => {
     const author = thread.authorInfo;
+    if (author?.shareUrl) {
+        return new URL(author.shareUrl, webRoot).href;
+    }
     const id = author?.userIdStr ?? author?.idStr ?? author?.userId ?? author?.id ?? thread.authorIdStr ?? thread.authorId;
     return id ? getUserLink(String(id)) : undefined;
 };

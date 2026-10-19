@@ -39,7 +39,7 @@ async function handler(ctx): Promise<Data> {
     return {
         title: `${name} - 我的华为个人主页`,
         description: user.description ?? user.introduce,
-        link: getUserLink(id),
+        link: user.shareUrl ? new URL(user.shareUrl, 'https://cn.club.vmall.com').href : getUserLink(id),
         image: user.avatarUrl ?? user.avatar,
         language: 'zh-CN',
         item: items,
