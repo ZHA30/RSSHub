@@ -1,3 +1,4 @@
+import { load } from 'cheerio';
 import { decodeHTML } from 'entities';
 import { renderToString } from 'hono/jsx/dom/server';
 
@@ -54,61 +55,25 @@ type ShogakukanBook = {
 const getComicsUrl = (type: string) => `${rootUrl}/comics/type/${encodeURIComponent(type)}`;
 
 const extractPageData = (html: string): ShogakukanPage => {
-    const matched = html.match(/<div id="app" data-page="([^"]+)"/);
+    const page = load(html)('#app').attr('data-page');
 
-    if (!matched) {
+    if (!page) {
         throw new Error('Failed to extract Shogakukan page data');
     }
 
-    return JSON.parse(decodeHTML(matched[1]));
+    return JSON.parse(decodeHTML(page));
 };
 
 const resolveUrl = (url: string) => new URL(url, rootUrl).href;
 
 const renderDescription = (book: ShogakukanBook) => {
     const description = decodeHTML(book.body_hyouji?.text || book.body || '');
-    const price = book.price_hyouji?.teika_now ? `${book.price_hyouji.price_title_now || '定価'} ${book.price_hyouji.teika_now}円` : undefined;
-    const categories = getCategories(book);
 
     return renderToString(
         <div>
             {book.image_url && <img src={resolveUrl(book.image_url)} alt={book.title} />}
             {book.header_hyouji?.text && <p>{book.header_hyouji.text}</p>}
             {description && <p dangerouslySetInnerHTML={{ __html: description }} />}
-            <table>
-                <tbody>
-                    {book.series_name && (
-                        <tr>
-                            <td>シリーズ</td>
-                            <td>{book.series_name}</td>
-                        </tr>
-                    )}
-                    {book.sho_source?.series_name && (
-                        <tr>
-                            <td>掲載誌・レーベル</td>
-                            <td>{book.sho_source.series_name}</td>
-                        </tr>
-                    )}
-                    {book.isbn_cd && (
-                        <tr>
-                            <td>ISBN</td>
-                            <td>{book.isbn_cd}</td>
-                        </tr>
-                    )}
-                    {price && (
-                        <tr>
-                            <td>価格</td>
-                            <td>{price}</td>
-                        </tr>
-                    )}
-                    {categories.length > 0 && (
-                        <tr>
-                            <td>分類</td>
-                            <td>{categories.join('、')}</td>
-                        </tr>
-                    )}
-                </tbody>
-            </table>
         </div>
     );
 };
@@ -122,10 +87,6 @@ const getCategories = (book: ShogakukanBook): string[] => {
 
     if (book.sho_source?.series_name) {
         categories.push(book.sho_source.series_name);
-    }
-
-    if (book.purchases) {
-        categories.push(...book.purchases.map((item) => item.purchase));
     }
 
     return categories;
@@ -159,8 +120,12 @@ export const route: Route = {
 async function handler(ctx) {
     const { type = 'all' } = ctx.req.param();
     const currentUrl = getComicsUrl(type);
-    const response = await ofetch<string>(currentUrl);
-    const data = extractPageData(response);
+    const response = await ofetch(currentUrl, {
+        headers: {
+            'X-Inertia': 'true',
+        },
+    });
+    const data: ShogakukanPage = typeof response === 'string' ? extractPageData(response) : response;
 
     return {
         title: data.props.page_title,
