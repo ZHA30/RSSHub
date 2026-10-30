@@ -118,7 +118,7 @@ const stripColorStyles = (style?: string) => {
         .map((declaration) => declaration.trim())
         .filter(Boolean)
         .filter((declaration) => {
-            const [property] = declaration.split(':');
+            const [property] = declaration.split(':', 1);
             const key = property?.trim().toLowerCase();
 
             return key !== 'color' && key !== 'background-color';
@@ -165,7 +165,8 @@ const extractDescription = (html?: string, fallback?: string) => {
             node.removeAttr('style');
         }
 
-        for (const [name, value] of Object.entries(node.attr() ?? {})) {
+        const attributes = Object.entries(node.attr() ?? {});
+        for (const [name, value] of attributes) {
             if (name.startsWith('on')) {
                 node.removeAttr(name);
                 continue;
@@ -178,7 +179,7 @@ const extractDescription = (html?: string, fallback?: string) => {
     });
     articleRoot.find('div, section, p, span').each((_, element) => {
         const node = $(element);
-        const hasMeaningfulText = node.text().replaceAll('\u00A0', ' ').trim().length > 0;
+        const hasMeaningfulText = node.text().replaceAll('\u{A0}', ' ').trim().length > 0;
         if (!hasMeaningfulText && node.find('img, video, audio, iframe').length === 0 && node.children().length === 0) {
             node.remove();
         }
