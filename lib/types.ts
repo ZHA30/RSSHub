@@ -90,6 +90,8 @@ export type Data = {
     allowEmpty?: boolean;
     /** Default publication-date sorting preference; the common sorted parameter takes precedence. */
     sortItems?: boolean;
+    /** Extract article content by default; the common mode parameter takes precedence. */
+    fulltext?: boolean;
     image?: string;
     author?: string;
     language?: Language;

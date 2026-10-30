@@ -5,6 +5,7 @@ import { decodeHTMLStrict } from 'entities';
 import type { MiddlewareHandler } from 'hono';
 import { convert } from 'html-to-text';
 import markdownit from 'markdown-it';
+import pMap from 'p-map';
 import { RE2JS } from 're2js';
 import sanitizeHtml from 'sanitize-html';
 
@@ -339,33 +340,36 @@ const middleware: MiddlewareHandler = async (ctx, next) => {
         }
 
         // fulltext
-        if (ctx.req.query('mode')?.toLowerCase() === 'fulltext') {
-            const tasks = data.item.map(async (item) => {
-                const { link, author, description } = item;
-                const parsed_result: any = await cache.tryGet(`mercury-cache-${link}`, async () => {
-                    if (link) {
-                        // if parser failed, return default description and not report error
-                        try {
-                            const { default: Parser } = await import('@jocmp/mercury-parser');
-                            const res = await ofetch(link);
-                            const $ = load(res);
-                            const result = await Parser.parse(link, {
-                                html: $.html(),
-                            });
-                            return result;
-                        } catch {
-                            // no-empty
+        if (ctx.req.query('mode') === undefined ? data.fulltext : ctx.req.query('mode')?.toLowerCase() === 'fulltext') {
+            await pMap(
+                data.item,
+                async (item) => {
+                    const { link, author, description } = item;
+                    const parsed_result: any = await cache.tryGet(`mercury-cache-${link}`, async () => {
+                        if (link) {
+                            // if parser failed, return default description and not report error
+                            try {
+                                const { default: Parser } = await import('@jocmp/mercury-parser');
+                                const res = await ofetch(link);
+                                const $ = load(res);
+                                const result = await Parser.parse(link, {
+                                    html: $.html(),
+                                });
+                                return result;
+                            } catch {
+                                // no-empty
+                            }
                         }
-                    }
-                });
+                    });
 
-                item.author = author || parsed_result?.author;
-                item.description = parsed_result && parsed_result.content.length > 40 ? decodeHTMLStrict(parsed_result.content) : description;
-                if (extractEnclosures && parsed_result?.content.length > 40 && item.description) {
-                    item.attachments = extractAttachments(load(item.description), item, hideImages);
-                }
-            });
-            await Promise.all(tasks);
+                    item.author = author || parsed_result?.author;
+                    item.description = parsed_result && parsed_result.content.length > 40 ? decodeHTMLStrict(parsed_result.content) : description;
+                    if (extractEnclosures && parsed_result?.content.length > 40 && item.description) {
+                        item.attachments = extractAttachments(load(item.description), item, hideImages);
+                    }
+                },
+                { concurrency: 5 }
+            );
         }
 
         // openai
