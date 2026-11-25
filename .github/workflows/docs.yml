@@ -1,0 +1,106 @@
+name: Docs Pages
+
+on:
+    push:
+        branches: [master]
+        paths:
+            - '.github/workflows/docs.yml'
+            - 'lib/routes/**'
+            - '!lib/routes/**/*.test.*'
+            - '!lib/routes/**/*.spec.*'
+            - '!lib/routes/**/__tests__/**'
+            - 'lib/types.ts'
+            - 'lib/registry.ts'
+            - 'lib/registry-helpers.ts'
+            - 'scripts/patch-docs.cjs'
+            - 'scripts/workflow/build-docs.ts'
+            - 'scripts/workflow/build-routes.ts'
+            - 'scripts/workflow/check-orphan-files.ts'
+            - 'scripts/workflow/data.ts'
+            - 'package.json'
+            - 'pnpm-lock.yaml'
+            - 'pnpm-workspace.yaml'
+            - 'patches/**'
+            - 'tsconfig.json'
+            - '.nvmrc'
+
+permissions:
+    contents: read
+    pages: read
+
+concurrency:
+    group: docs-pages
+    cancel-in-progress: true
+
+jobs:
+    build:
+        runs-on: ubuntu-latest
+        timeout-minutes: 30
+        steps:
+            - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  ref: ${{ github.sha }}
+                  fetch-depth: 0
+            - name: Checkout docs site
+              uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+              with:
+                  repository: RSSNext/rsshub-docs
+                  path: rsshub-docs
+            - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+            - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+              with:
+                  node-version-file: .nvmrc
+                  cache: pnpm
+                  cache-dependency-path: |
+                      pnpm-lock.yaml
+                      rsshub-docs/pnpm-lock.yaml
+            - name: Build RSSHub docs data
+              run: |
+                  pnpm install --frozen-lockfile
+                  pnpm build:docs
+            - name: Sync route data into docs site
+              run: |
+                  cp assets/build/docs/routes.json rsshub-docs/src/public/routes.json
+                  cp assets/build/docs/categories.json rsshub-docs/src/public/categories.json
+                  cp lib/types.ts rsshub-docs/.vitepress/theme/types.ts
+                  cp scripts/workflow/data.ts rsshub-docs/.vitepress/config/data.ts
+            - name: Configure Pages
+              id: pages
+              uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5.0.0
+            - name: Resolve Pages base
+              run: |
+                  if [ -n "${{ steps.pages.outputs.base_path }}" ]; then
+                    echo "PAGES_BASE=${{ steps.pages.outputs.base_path }}/" >> "$GITHUB_ENV"
+                  else
+                    echo "PAGES_BASE=/" >> "$GITHUB_ENV"
+                  fi
+            - name: Patch docs base path
+              run: node scripts/patch-docs.cjs
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
+                  NODE_PATH: ${{ github.workspace }}/node_modules
+            - name: Build docs site
+              working-directory: rsshub-docs
+              run: |
+                  pnpm install --frozen-lockfile
+                  pnpm docs:build
+              env:
+                  DOCS_BASE: ${{ env.PAGES_BASE }}
+            - name: Upload Pages artifact
+              uses: actions/upload-pages-artifact@56afc609e74202658d3ffba0e8f6dda462b719fa # v3.0.1
+              with:
+                  path: rsshub-docs/.vitepress/dist
+
+    deploy:
+        environment:
+            name: github-pages
+            url: ${{ steps.deployment.outputs.page_url }}
+        needs: build
+        runs-on: ubuntu-latest
+        permissions:
+            pages: write
+            id-token: write
+        steps:
+            - name: Deploy to GitHub Pages
+              id: deployment
+              uses: actions/deploy-pages@v4
