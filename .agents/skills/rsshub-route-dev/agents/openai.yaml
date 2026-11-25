@@ -1,0 +1,4 @@
+interface:
+  display_name: "RSSHub Route Dev"
+  short_description: "Design RSSHub routes with clear contracts and operating limits."
+  default_prompt: "Use $rsshub-route-dev to design, implement, repair, or review an RSSHub route around its user contract, upstream dependencies, failure behavior, and evidence."
