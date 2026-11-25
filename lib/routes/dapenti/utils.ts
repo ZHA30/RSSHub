@@ -1,76 +1,81 @@
 import { load } from 'cheerio';
 import iconv from 'iconv-lite';
+import pMap from 'p-map';
+import { z } from 'zod';
 
 import cache from '@/utils/cache';
-import got from '@/utils/got';
+import ofetch from '@/utils/ofetch';
 import { parseDate } from '@/utils/time';
 
-export default {
-    parseFeed: async ({ subjectid: subjectId }) => {
-        const url = `https://www.dapenti.com/blog/blog.asp?name=xilei&subjectid=${subjectId}`;
-        const listRes = await got({
-            method: 'get',
-            url,
-            headers: {
-                Referer: url,
-            },
-            // Fetch binary data before decoding the site's legacy GBK encoding.
-            responseType: 'buffer',
-        });
-        const data = iconv.decode(listRes.data, 'gb2312');
-        const $ = load(data);
-        // Fetch the latest three entries with their full public content.
-        const list = $('li', 'ul').slice(0, 3).toArray();
+export const baseUrl = 'https://www.dapenti.com/blog/';
 
-        const items = await Promise.all(
-            list.map((item) =>
-                cache.tryGet(`https://www.dapenti.com/blog/${$(item).find('a').attr('href')}`, async () => {
-                    const el = $(item);
-                    const url = `https://www.dapenti.com/blog/${el.find('a').attr('href')}`;
-                    const articleResponse = await got({
-                        method: 'get',
-                        url,
-                        headers: {
-                            Referer: url,
-                        },
-                        responseType: 'buffer',
-                    });
-                    const articleHtml = iconv.decode(articleResponse.data, 'gbk');
-                    const $article = load(articleHtml);
-                    const description = $article('body > table > tbody > tr > td.oblog_t_2 > div > table > tbody > tr:nth-child(2) > td');
-                    const pubInfo = description.find('span span.oblog_text').text().split('发布于');
-                    const bodyStart = description.children('p[style="margin:2px 2px 2px 2px;"]').first();
-                    bodyStart.prevAll().remove();
-                    if (subjectId.toString() === '70') {
-                        const dailyStart = description
-                            .children()
-                            .filter((_, element) => $article(element).text().trim() === '每天一图卦，让我们更清楚地了解这个世界')
-                            .first();
-                        dailyStart.prevAll().remove();
-                    }
-                    const footer = description
-                        .children()
-                        .filter((_, element) => $article(element).text().trimStart().startsWith('【无需App在移动设备上看喷嚏】'))
-                        .first();
-                    footer.nextAll().remove();
-                    footer.remove();
-                    description.find('style, .adsbygoogle').remove();
-                    const single = {
-                        title: el.text(),
-                        author: pubInfo[0].trim(),
-                        description: description.html(),
-                        pubDate: parseDate(pubInfo[1].trim(), 8),
-                        link: url,
-                    };
-                    return single;
-                })
-            )
-        );
-
-        return {
-            title: `喷嚏-${subjectId}`,
-            link: url,
-            item: items,
-        };
-    },
+export const channels = {
+    xilei: '铂程斋',
+    tugua: '喷嚏图卦',
+    agile: '乐活',
+    caijing: '财经风云',
+    aieverything: 'AI Everything',
+    fushihui: '浮世汇',
+    shijieguan: '世界观',
+    changyuedu: '长阅读',
+    dianying: '乐影',
+    piaoquan: '铂程的票圈',
+    youxuan: '喷嚏优选',
 };
+
+const articleSchema = z.object({
+    id: z.number(),
+    topic: z.string(),
+    snippet: z.string(),
+    addtime: z.string(),
+    subject_name: z.string(),
+    source_url: z.string(),
+});
+
+const responseSchema = z.object({
+    success: z.literal(true),
+    hits: z.array(articleSchema),
+});
+
+export async function getItems(channel: string, limit: number) {
+    const response = await ofetch<z.infer<typeof responseSchema>>(`${baseUrl}member-search/api.asp`, {
+        query: { channel, sort: 'newest', cursor: 0, limit: 30 },
+        schema: responseSchema,
+    });
+
+    return pMap(
+        response.hits.slice(0, limit),
+        async (article) => {
+            const link = new URL(article.source_url, baseUrl).href;
+            const detail = await cache.tryGet(`article:${article.id}`, () => getArticle(link));
+
+            return {
+                title: article.topic,
+                link,
+                guid: `dapenti:${article.id}`,
+                summary: article.snippet || undefined,
+                pubDate: parseDate(article.addtime, 'YYYY-MM-DD HH:mm:ss', 8),
+                category: article.subject_name ? [article.subject_name] : undefined,
+                ...detail,
+            };
+        },
+        { concurrency: 3 }
+    );
+}
+
+async function getArticle(link: string) {
+    const response = await ofetch(link, { responseType: 'arrayBuffer', publicOnly: true });
+    const $ = load(iconv.decode(Buffer.from(response), 'gbk'));
+    const content = $('#article-content');
+
+    if (!content.length) {
+        throw new Error(`Article content not found: ${link}`);
+    }
+
+    content.find('script, style, noscript, .article-ad, .adsbygoogle').remove();
+
+    return {
+        description: content.html() || undefined,
+        author: $('.article-meta').text().split('发布于', 1)[0].trim() || undefined,
+    };
+}
